@@ -1,11 +1,35 @@
 package com.ds.storage;
+
+import com.ds.storage.grpc.StorageServiceImpl;
+import io.grpc.Server;
+import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
+import io.grpc.protobuf.services.ProtoReflectionService;
+import java.io.IOException;
+
 public class StorageNode {
-  public static void main(String[] args) {
-    int port = 8001; String dataDir = "./data/node1";
+  public static void main(String[] args) throws IOException, InterruptedException {
+    int port = 8001;
+    String dataDir = "./data/node1";
     for (int i = 0; i + 1 < args.length; i++) {
-      if (args[i].equals("--port")) port = Integer.parseInt(args[i + 1]);
-      if (args[i].equals("--data")) dataDir = args[i + 1];
+      if ("--port".equals(args[i])) {
+        port = Integer.parseInt(args[i + 1]);
+      }
+      if ("--data".equals(args[i])) {
+        dataDir = args[i + 1];
+      }
     }
-    System.out.println("[StorageNode] Starting on port " + port + ", data dir " + dataDir + " (Stage 0 skeleton)");
+
+    Server server = NettyServerBuilder.forPort(port)
+        .addService(new StorageServiceImpl())
+        .addService(ProtoReflectionService.newInstance())
+        .build()
+        .start();
+
+    System.out.println(
+        "[StorageNode] gRPC StorageService started on :" + port + " (Stage 1), data=" + dataDir);
+
+    Runtime.getRuntime().addShutdownHook(new Thread(server::shutdown));
+
+    server.awaitTermination();
   }
 }
