@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 mvn -q -DskipTests package
 echo "Launching Stage 1 gRPC placeholders..."
 COMMON_CP="common/target/classes:common/target/*"
