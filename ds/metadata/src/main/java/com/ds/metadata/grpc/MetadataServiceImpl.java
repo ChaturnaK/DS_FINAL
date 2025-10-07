@@ -1,10 +1,7 @@
 package com.ds.metadata.grpc;
 
 import com.ds.metadata.MetaStore;
-import com.ds.metadata.MetaStore.BlockEntry;
-import com.ds.metadata.MetaStore.FileEntry;
 import com.ds.metadata.PlacementService;
-import com.ds.metadata.PlacementService.NodeInfo;
 import com.ds.metadata.ZkCoordinator;
 import ds.Ack;
 import ds.BlockPlan;
@@ -15,161 +12,114 @@ import ds.LocateResp;
 import ds.MetadataServiceGrpc;
 import ds.PlanPutReq;
 import ds.PlanPutResp;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
-import java.util.UUID;
 
 public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImplBase {
-  private static final long DEFAULT_CHUNK_SIZE = 8L * 1024 * 1024;
+  private final MetaStore meta;
+  private final PlacementService placement;
+  private final ZkCoordinator coord;
 
-  private final ZkCoordinator coordinator;
-  private final MetaStore metaStore;
-  private final PlacementService placementService;
-
-  public MetadataServiceImpl(
-      ZkCoordinator coordinator, MetaStore metaStore, PlacementService placementService) {
-    this.coordinator = coordinator;
-    this.metaStore = metaStore;
-    this.placementService = placementService;
+  public MetadataServiceImpl(MetaStore meta, PlacementService placement, ZkCoordinator coord) {
+    this.meta = meta;
+    this.placement = placement;
+    this.coord = coord;
   }
 
   @Override
-  public void planPut(PlanPutReq request, StreamObserver<PlanPutResp> responseObserver) {
-    if (!coordinator.isLeader()) {
-      notLeader(responseObserver);
+  public void planPut(PlanPutReq req, StreamObserver<PlanPutResp> respObs) {
+    if (!coord.isLeader()) {
+      respObs.onError(
+          io.grpc.Status.FAILED_PRECONDITION
+              .withDescription("Not leader")
+              .asRuntimeException());
       return;
     }
     try {
-      long fileSize = Math.max(0, request.getSize());
-      long chunkSize = request.getChunkSize() > 0 ? request.getChunkSize() : DEFAULT_CHUNK_SIZE;
-      int blockCount = (fileSize == 0) ? 1 : (int) ((fileSize + chunkSize - 1) / chunkSize);
-      blockCount = Math.max(1, blockCount);
-
-      long remaining = fileSize;
-      PlanPutResp.Builder resp = PlanPutResp.newBuilder();
-      for (int i = 0; i < blockCount; i++) {
-        String blockId = generateBlockId(request.getPath(), i);
-        List<NodeInfo> replicas = placementService.chooseReplicas(blockId);
-
-        long blockSize;
-        if (blockCount == 1) {
-          blockSize = fileSize;
-        } else if (i == blockCount - 1) {
-          blockSize = Math.max(remaining, 0);
-        } else {
-          blockSize = Math.min(chunkSize, Math.max(remaining, chunkSize));
+      int chunkSize = req.getChunkSize() > 0 ? req.getChunkSize() : 8 * 1024 * 1024;
+      long size = req.getSize();
+      int chunks = (int) Math.ceil((double) size / chunkSize);
+      List<BlockPlan> plans = new ArrayList<>();
+      for (int i = 0; i < chunks; i++) {
+        String blockId = req.getPath() + "#b" + i;
+        List<PlacementService.NodeInfo> replicas = placement.chooseReplicas(blockId);
+        BlockPlan.Builder bp = BlockPlan.newBuilder().setBlockId(blockId).setSize(chunkSize);
+        for (var ni : replicas) {
+          bp.addReplicaUrls(ni.host + ":" + ni.port);
         }
-        remaining = Math.max(0, remaining - blockSize);
-
-        BlockPlan.Builder blockPlan = BlockPlan.newBuilder().setBlockId(blockId).setSize(blockSize);
-        for (NodeInfo ni : replicas) {
-          blockPlan.addReplicaUrls(ni.host + ":" + ni.port);
-        }
-        resp.addBlocks(blockPlan);
+        plans.add(bp.build());
       }
-
-      responseObserver.onNext(resp.build());
-      responseObserver.onCompleted();
-    } catch (IllegalStateException e) {
-      responseObserver.onError(
-          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asRuntimeException());
+      PlanPutResp resp = PlanPutResp.newBuilder().addAllBlocks(plans).build();
+      respObs.onNext(resp);
+      respObs.onCompleted();
     } catch (Exception e) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription("PlanPut failed").withCause(e).asRuntimeException());
+      respObs.onError(
+          io.grpc.Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
     }
   }
 
   @Override
-  public void locate(FilePath request, StreamObserver<LocateResp> responseObserver) {
-    try {
-      Optional<FileEntry> feOpt = metaStore.getFile(request.getPath());
-      if (feOpt.isEmpty()) {
-        responseObserver.onError(
-            Status.NOT_FOUND
-                .withDescription("File not found: " + request.getPath())
-                .asRuntimeException());
-        return;
-      }
-
-      FileEntry fe = feOpt.get();
-      LocateResp.Builder resp = LocateResp.newBuilder().setSize(fe.size);
-      for (String blockId : fe.blocks) {
-        Optional<BlockEntry> beOpt = metaStore.getBlock(blockId);
-        if (beOpt.isEmpty()) {
-          responseObserver.onError(
-              Status.NOT_FOUND
-                  .withDescription("Block metadata missing for " + blockId)
-                  .asRuntimeException());
-          return;
-        }
-        BlockEntry be = beOpt.get();
-        BlockPlan.Builder blockPlan = BlockPlan.newBuilder().setBlockId(blockId).setSize(be.size);
-        blockPlan.addAllReplicaUrls(be.replicas);
-        resp.addBlocks(blockPlan);
-      }
-
-      responseObserver.onNext(resp.build());
-      responseObserver.onCompleted();
-    } catch (Exception e) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription("Locate failed").withCause(e).asRuntimeException());
-    }
-  }
-
-  @Override
-  public void commit(CommitReq request, StreamObserver<Ack> responseObserver) {
-    if (!coordinator.isLeader()) {
-      notLeader(responseObserver);
+  public void commit(CommitReq req, StreamObserver<Ack> respObs) {
+    if (!coord.isLeader()) {
+      respObs.onError(
+          io.grpc.Status.FAILED_PRECONDITION
+              .withDescription("Not leader")
+              .asRuntimeException());
       return;
     }
-    if (request.getBlocksCount() == 0) {
-      responseObserver.onError(
-          Status.INVALID_ARGUMENT.withDescription("No blocks supplied").asRuntimeException());
-      return;
-    }
-
     try {
-      long now = System.currentTimeMillis();
-      FileEntry fileEntry = new FileEntry();
-      fileEntry.size = request.getSize();
-      fileEntry.ctime = now;
-      fileEntry.mtime = now;
-
-      Map<String, BlockEntry> blocks = new LinkedHashMap<>();
+      MetaStore.FileEntry fe = new MetaStore.FileEntry();
+      fe.size = req.getSize();
+      fe.ctime = fe.mtime = System.currentTimeMillis();
       List<String> blockIds = new ArrayList<>();
-      for (CommitBlock block : request.getBlocksList()) {
-        blockIds.add(block.getBlockId());
-        BlockEntry blockEntry = new BlockEntry();
-        blockEntry.size = block.getSize();
-        blockEntry.replicas.addAll(block.getReplicasList());
-        blocks.put(block.getBlockId(), blockEntry);
+      Map<String, MetaStore.BlockEntry> bes = new HashMap<>();
+      for (CommitBlock cb : req.getBlocksList()) {
+        blockIds.add(cb.getBlockId());
+        MetaStore.BlockEntry be = new MetaStore.BlockEntry();
+        long size = cb.getSize();
+        be.size = size > 0 ? size : 8L * 1024 * 1024;
+        if (!cb.getReplicasList().isEmpty()) {
+          be.replicas.addAll(cb.getReplicasList());
+        } else {
+          var nodes = placement.chooseReplicas(cb.getBlockId());
+          for (var ni : nodes) {
+            be.replicas.add(ni.host + ":" + ni.port);
+          }
+        }
+        bes.put(cb.getBlockId(), be);
       }
-      fileEntry.blocks = blockIds;
-
-      metaStore.commit(request.getPath(), fileEntry, blocks);
-
-      Ack ack = Ack.newBuilder().setOk(true).setMsg("Committed").build();
-      responseObserver.onNext(ack);
-      responseObserver.onCompleted();
+      fe.blocks = blockIds;
+      meta.commit(req.getPath(), fe, bes); // atomic, idempotent
+      respObs.onNext(Ack.newBuilder().setOk(true).setMsg("committed").build());
+      respObs.onCompleted();
     } catch (Exception e) {
-      responseObserver.onError(
-          Status.INTERNAL.withDescription("Commit failed").withCause(e).asRuntimeException());
+      respObs.onError(
+          io.grpc.Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
     }
   }
 
-  private static String generateBlockId(String path, int index) {
-    String input = path + "#" + index + "#" + System.nanoTime() + "#" + UUID.randomUUID();
-    return UUID.nameUUIDFromBytes(input.getBytes(StandardCharsets.UTF_8)).toString();
-  }
-
-  private <T> void notLeader(StreamObserver<T> observer) {
-    observer.onError(
-        Status.FAILED_PRECONDITION.withDescription("Not leader").asRuntimeException());
+  @Override
+  public void locate(FilePath req, StreamObserver<LocateResp> respObs) {
+    try {
+      var fe = meta.getFile(req.getPath()).orElseThrow(() -> new Exception("file not found"));
+      List<BlockPlan> bps = new ArrayList<>();
+      for (String bid : fe.blocks) {
+        var be = meta.getBlock(bid).orElseThrow(() -> new Exception("block not found " + bid));
+        BlockPlan.Builder bp = BlockPlan.newBuilder().setBlockId(bid).setSize(be.size);
+        for (String r : be.replicas) {
+          bp.addReplicaUrls(r);
+        }
+        bps.add(bp.build());
+      }
+      LocateResp resp = LocateResp.newBuilder().addAllBlocks(bps).setSize(fe.size).build();
+      respObs.onNext(resp);
+      respObs.onCompleted();
+    } catch (Exception e) {
+      respObs.onError(
+          io.grpc.Status.NOT_FOUND.withDescription(e.getMessage()).asRuntimeException());
+    }
   }
 }

@@ -1,7 +1,9 @@
 package com.ds.storage;
 
 import com.ds.common.JsonSerde;
+import com.ds.storage.ChaosHooks;
 import com.ds.storage.grpc.StorageServiceImpl;
+import com.ds.storage.Replicator;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
@@ -57,6 +59,8 @@ public class StorageNode {
       }
     }
 
+    ChaosHooks.configureFromEnv();
+
     System.setProperty("ds.data.dir", dataDir);
 
     Path dataPath = Paths.get(dataDir);
@@ -75,10 +79,11 @@ public class StorageNode {
     registerNode(curator, nodePath, host, port, zone, freeBytes);
 
     BlockStore store = new BlockStore();
+    Replicator replicator = new Replicator(store);
 
     Server server =
         NettyServerBuilder.forPort(port)
-            .addService(new StorageServiceImpl(store))
+            .addService(new StorageServiceImpl(store, replicator))
             .addService(ProtoReflectionService.newInstance())
             .build()
             .start();
