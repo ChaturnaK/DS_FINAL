@@ -125,16 +125,30 @@ public class StorageNode {
             new Thread(
                 () -> {
                   if (shuttingDown.compareAndSet(false, true)) {
-                    log.info("Shutdown signal received, stopping storage node {}", nodeId);
-                    server.shutdown();
-                    ses.shutdown();
-                    curator.close();
+                    System.out.println("Shutting down gracefully…");
+                    try {
+                      server.shutdown();
+                      server.awaitTermination(5, TimeUnit.SECONDS);
+                    } catch (Exception ignored) {
+                      // ignore
+                    }
+                    try {
+                      ses.shutdownNow();
+                    } catch (Exception ignored) {
+                      // ignore
+                    }
+                    try {
+                      curator.close();
+                    } catch (Exception ignored) {
+                      // ignore
+                    }
+                    System.out.println("Shutdown complete.");
                   }
                 }));
 
     server.awaitTermination();
     if (shuttingDown.compareAndSet(false, true)) {
-      ses.shutdown();
+      ses.shutdownNow();
       curator.close();
     }
   }
