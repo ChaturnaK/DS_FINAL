@@ -50,8 +50,10 @@ public class MetadataServer {
       try (ZkCoordinator coordinator = new ZkCoordinator(zkConnect, serverId)) {
         EnsurePath filesPath = new EnsurePath(MetaStore.FILES);
         EnsurePath blocksPath = new EnsurePath(MetaStore.BLOCKS);
+        EnsurePath leaderPath = new EnsurePath("/ds/metadata/leader");
         filesPath.ensure(coordinator.client().getZookeeperClient());
         blocksPath.ensure(coordinator.client().getZookeeperClient());
+        leaderPath.ensure(coordinator.client().getZookeeperClient());
 
         MetaStore metaStore = new MetaStore(coordinator.client());
         PlacementService placementService = new PlacementService(coordinator.client(), replication);
@@ -75,12 +77,19 @@ public class MetadataServer {
         metricsExec.scheduleAtFixedRate(Metrics::dumpCsv, 5, 5, TimeUnit.SECONDS);
 
         Counter leaderChanges = Metrics.counter("leader_changes");
+        String leaderEndpoint = host + ":" + port;
         coordinator.addLeadershipListener(
             isLeader -> {
               leaderChanges.increment();
+              if (isLeader) {
+                coordinator.publishLeaderEndpoint(leaderEndpoint);
+              } else {
+                coordinator.clearLeaderEndpoint();
+              }
             });
         if (coordinator.isLeader()) {
           leaderChanges.increment();
+          coordinator.publishLeaderEndpoint(leaderEndpoint);
         }
 
         Server server =

@@ -3,6 +3,7 @@ package com.ds.storage.grpc;
 import com.ds.common.Metrics;
 import com.ds.common.VectorClock;
 import com.ds.storage.BlockStore;
+import com.ds.storage.ChaosHooks;
 import com.ds.storage.Replicator;
 import ds.Ack;
 import ds.BlockChunk;
@@ -39,8 +40,24 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
       final long start = System.nanoTime();
       final Timer timer = Metrics.timer("put_latency_ms");
 
+      boolean chaosEvaluated = false;
+      boolean aborted = false;
+
       @Override
       public void onNext(PutRequest request) {
+        if (!chaosEvaluated) {
+          chaosEvaluated = true;
+          if (ChaosHooks.shouldDrop()) {
+            aborted = true;
+            responseObserver.onError(
+                Status.UNAVAILABLE.withDescription("CHAOS_DROP").asRuntimeException());
+            return;
+          }
+          ChaosHooks.maybeDelay();
+        }
+        if (aborted) {
+          return;
+        }
         switch (request.getPayloadCase()) {
           case OPEN -> {
             PutOpen open = request.getOpen();
@@ -61,6 +78,10 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
 
       @Override
       public void onCompleted() {
+        if (aborted) {
+          timer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+          return;
+        }
         try {
           if (blockId == null || blockId.isBlank()) {
             responseObserver.onError(
@@ -189,9 +210,17 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
           continue;
         }
         bytes += buf.length;
+        if (ChaosHooks.shouldDrop()) {
+          responseObserver.onError(
+              Status.UNAVAILABLE.withDescription("CHAOS_DROP").asRuntimeException());
+          return;
+        }
+        ChaosHooks.maybeDelay();
         GetResponse chunkResp =
             GetResponse.newBuilder()
-                .setChunk(BlockChunk.newBuilder().setData(com.google.protobuf.ByteString.copyFrom(buf)))
+                .setChunk(
+                    BlockChunk.newBuilder()
+                        .setData(com.google.protobuf.ByteString.copyFrom(buf)))
                 .build();
         responseObserver.onNext(chunkResp);
       }

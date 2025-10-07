@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeoutException;
+import java.util.function.Function;
 
 public class DsClient {
   private static final int DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
@@ -70,18 +71,15 @@ public class DsClient {
         Path local = Paths.get(args[1]);
         String remote = args[2];
         long fileSize = Files.size(local);
-        ManagedChannel mc =
-            ManagedChannelBuilder.forAddress("localhost", 7000).usePlaintext().build();
-        MetadataServiceGrpc.MetadataServiceBlockingStub meta =
-            MetadataServiceGrpc.newBlockingStub(mc);
-
         PlanPutResp plan =
-            meta.planPut(
-                PlanPutReq.newBuilder()
-                    .setPath(remote)
-                    .setSize(fileSize)
-                    .setChunkSize(CHUNK_SIZE)
-                    .build());
+            withLeader(
+                stub ->
+                    stub.planPut(
+                        PlanPutReq.newBuilder()
+                            .setPath(remote)
+                            .setSize(fileSize)
+                            .setChunkSize(CHUNK_SIZE)
+                            .build()));
         byte[] buf = new byte[CHUNK_SIZE];
         List<Integer> actualSizes = new ArrayList<>();
         HashMap<String, List<String>> successfulReplicas = new HashMap<>();
@@ -163,8 +161,11 @@ public class DsClient {
                   .addAllReplicas(replicas)
                   .build());
         }
-        meta.commit(commitBuilder.build());
-        mc.shutdownNow();
+        withLeader(
+            stub -> {
+              stub.commit(commitBuilder.build());
+              return Boolean.TRUE;
+            });
         System.out.println("Upload complete for " + remote);
       }
       case "get" -> {
@@ -174,11 +175,9 @@ public class DsClient {
         }
         String remote = args[1];
         Path localOut = Paths.get(args[2]);
-        ManagedChannel mc =
-            ManagedChannelBuilder.forAddress("localhost", 7000).usePlaintext().build();
-        MetadataServiceGrpc.MetadataServiceBlockingStub meta =
-            MetadataServiceGrpc.newBlockingStub(mc);
-        LocateResp loc = meta.locate(FilePath.newBuilder().setPath(remote).build());
+        LocateResp loc =
+            withLeader(
+                stub -> stub.locate(FilePath.newBuilder().setPath(remote).build()));
         try (var out = Files.newOutputStream(localOut)) {
           for (BlockPlan bp : loc.getBlocksList()) {
             var replicas = bp.getReplicaUrlsList();
@@ -268,7 +267,6 @@ public class DsClient {
             }
           }
         }
-        mc.shutdownNow();
         System.out.println("Download complete → " + localOut);
       }
       case "race" -> {
@@ -279,26 +277,23 @@ public class DsClient {
         Path a = Paths.get(args[1]);
         Path b = Paths.get(args[2]);
         String remote = args[3];
-        ManagedChannel mc =
-            ManagedChannelBuilder.forAddress("localhost", 7000).usePlaintext().build();
-        MetadataServiceGrpc.MetadataServiceBlockingStub meta =
-            MetadataServiceGrpc.newBlockingStub(mc);
+        long sizeA = Files.size(a);
         PlanPutResp plan =
-            meta.planPut(
-                PlanPutReq.newBuilder()
-                    .setPath(remote)
-                    .setSize(Files.size(a))
-                    .setChunkSize(CHUNK_SIZE)
-                    .build());
+            withLeader(
+                stub ->
+                    stub.planPut(
+                        PlanPutReq.newBuilder()
+                            .setPath(remote)
+                            .setSize(sizeA)
+                            .setChunkSize(CHUNK_SIZE)
+                            .build()));
         if (plan.getBlocksCount() == 0) {
           System.out.println("No blocks planned for " + remote);
-          mc.shutdownNow();
           return;
         }
         BlockPlan bp0 = plan.getBlocks(0);
         if (bp0.getReplicaUrlsCount() < 2) {
           System.out.println("Need at least two replicas to race");
-          mc.shutdownNow();
           return;
         }
         String hp0 = bp0.getReplicaUrls(0);
@@ -343,7 +338,12 @@ public class DsClient {
         t2.start();
         t1.join();
         t2.join();
-        mc.shutdownNow();
+      }
+      case "leader" -> {
+        String zk = System.getProperty("ds.zk", "localhost:2181");
+        try (LeaderDiscovery ld = new LeaderDiscovery(zk)) {
+          System.out.println(ld.hostPort());
+        }
       }
       default -> System.out.println("Unknown command");
     }
@@ -354,6 +354,7 @@ public class DsClient {
     System.out.println("  put <localFile> <remotePath>");
     System.out.println("  get <remotePath> <localFile>");
     System.out.println("  race <localA> <localB> <remotePath>");
+    System.out.println("  leader");
     System.out.println("  putBlock <host:port> <blockId> <file>");
     System.out.println("  getBlock <host:port> <blockId> <out>");
   }
@@ -376,5 +377,48 @@ public class DsClient {
     } catch (Exception e) {
       return "cli-" + java.util.UUID.randomUUID();
     }
+  }
+
+  private static <T> T withLeader(Function<MetadataServiceGrpc.MetadataServiceBlockingStub, T> call)
+      throws Exception {
+    String zk = System.getProperty("ds.zk", "localhost:2181");
+    Exception last = null;
+    try (LeaderDiscovery discovery = new LeaderDiscovery(zk)) {
+      for (int attempt = 0; attempt < 5; attempt++) {
+        ManagedChannel channel = null;
+        try {
+          String endpoint = discovery.hostPort();
+          String leaderHost = host(endpoint);
+          int leaderPort = port(endpoint);
+          if (leaderPort <= 0) {
+            throw new IllegalStateException("Invalid leader endpoint: " + endpoint);
+          }
+          channel =
+              ManagedChannelBuilder.forAddress(leaderHost, leaderPort).usePlaintext().build();
+          MetadataServiceGrpc.MetadataServiceBlockingStub stub =
+              MetadataServiceGrpc.newBlockingStub(channel);
+          T result = call.apply(stub);
+          return result;
+        } catch (io.grpc.StatusRuntimeException sre) {
+          last = sre;
+        } catch (Exception e) {
+          last = e;
+        } finally {
+          if (channel != null) {
+            channel.shutdownNow();
+          }
+        }
+        try {
+          Thread.sleep(500L * (attempt + 1));
+        } catch (InterruptedException ie) {
+          Thread.currentThread().interrupt();
+          throw ie;
+        }
+      }
+    }
+    if (last != null) {
+      throw last;
+    }
+    throw new IllegalStateException("Unable to contact metadata leader");
   }
 }

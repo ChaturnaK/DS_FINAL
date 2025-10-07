@@ -18,6 +18,7 @@ public class ZkCoordinator implements AutoCloseable {
   private final CuratorFramework client;
   private final LeaderLatch leaderLatch;
   private static final String STORAGE_NODES_PATH = "/ds/nodes/storage";
+  private static final String LEADER_PATH = "/ds/metadata/leader";
   private final List<Consumer<Boolean>> leaderListeners = new CopyOnWriteArrayList<>();
 
   public ZkCoordinator(String zk, String id) throws Exception {
@@ -52,6 +53,28 @@ public class ZkCoordinator implements AutoCloseable {
     return leaderLatch.hasLeadership();
   }
 
+  public void publishLeaderEndpoint(String endpoint) {
+    try {
+      if (client.checkExists().forPath(LEADER_PATH) == null) {
+        client.create().creatingParentsIfNeeded().forPath(LEADER_PATH, endpoint.getBytes());
+      } else {
+        client.setData().forPath(LEADER_PATH, endpoint.getBytes());
+      }
+    } catch (Exception e) {
+      log.warn("Failed to publish leader endpoint {}: {}", endpoint, e.toString());
+    }
+  }
+
+  public void clearLeaderEndpoint() {
+    try {
+      if (client.checkExists().forPath(LEADER_PATH) != null) {
+        client.setData().forPath(LEADER_PATH, new byte[0]);
+      }
+    } catch (Exception e) {
+      log.warn("Failed to clear leader endpoint: {}", e.toString());
+    }
+  }
+
   public void addLeadershipListener(Consumer<Boolean> listener) {
     if (listener != null) {
       leaderListeners.add(listener);
@@ -65,6 +88,7 @@ public class ZkCoordinator implements AutoCloseable {
     } catch (Exception ignore) {
       // ignore
     }
+    clearLeaderEndpoint();
     client.close();
   }
 

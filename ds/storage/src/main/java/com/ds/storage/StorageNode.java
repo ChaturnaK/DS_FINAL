@@ -1,6 +1,7 @@
 package com.ds.storage;
 
 import com.ds.common.JsonSerde;
+import com.ds.storage.ChaosHooks;
 import com.ds.storage.grpc.StorageServiceImpl;
 import com.ds.storage.Replicator;
 import io.grpc.Server;
@@ -57,6 +58,8 @@ public class StorageNode {
           // ignore
       }
     }
+
+    ChaosHooks.configureFromEnv();
 
     System.setProperty("ds.data.dir", dataDir);
 
