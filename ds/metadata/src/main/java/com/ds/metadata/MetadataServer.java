@@ -20,6 +20,8 @@ public class MetadataServer {
     int port = 7000;
     String zkConnect = "localhost:2181";
     int replication = 3;
+    long healInitialDelaySeconds = 2L;
+    long healIntervalSeconds = 3L;
 
     for (int i = 0; i < args.length; i++) {
       switch (args[i]) {
@@ -36,6 +38,16 @@ public class MetadataServer {
         case "--replication":
           if (i + 1 < args.length) {
             replication = Integer.parseInt(args[++i]);
+          }
+          break;
+        case "--heal-initial-delay":
+          if (i + 1 < args.length) {
+            healInitialDelaySeconds = Long.parseLong(args[++i]);
+          }
+          break;
+        case "--heal-interval":
+          if (i + 1 < args.length) {
+            healIntervalSeconds = Long.parseLong(args[++i]);
           }
           break;
         default:
@@ -68,14 +80,16 @@ public class MetadataServer {
       final ZkCoordinator coordRef = coordinator;
       final HealingPlanner plannerRef = planner;
       healExec = Executors.newSingleThreadScheduledExecutor();
+      long finalHealInitialDelaySeconds = Math.max(0L, healInitialDelaySeconds);
+      long finalHealIntervalSeconds = Math.max(1L, healIntervalSeconds);
       healExec.scheduleAtFixedRate(
           () -> {
             if (coordRef.isLeader()) {
               plannerRef.run();
             }
           },
-          5,
-          10,
+          finalHealInitialDelaySeconds,
+          finalHealIntervalSeconds,
           TimeUnit.SECONDS);
 
       metricsExec = Executors.newScheduledThreadPool(1);
