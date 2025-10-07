@@ -1,12 +1,18 @@
 package com.ds.metadata;
 
+import com.ds.common.Metrics;
 import com.ds.metadata.grpc.MetadataServiceImpl;
+import com.ds.time.NtpSync;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
+import io.micrometer.core.instrument.Counter;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.apache.curator.utils.EnsurePath;
 
 public class MetadataServer {
@@ -37,42 +43,134 @@ public class MetadataServer {
       }
     }
 
+    ZkCoordinator coordinator = null;
+    Server server = null;
+    ScheduledExecutorService healExec = null;
+    ScheduledExecutorService metricsExec = null;
     try {
       String host = resolveLocalHost();
       String serverId = host + ":" + port + ":" + UUID.randomUUID();
 
-      try (ZkCoordinator coordinator = new ZkCoordinator(zkConnect, serverId)) {
-        EnsurePath filesPath = new EnsurePath(MetaStore.FILES);
-        EnsurePath blocksPath = new EnsurePath(MetaStore.BLOCKS);
-        filesPath.ensure(coordinator.client().getZookeeperClient());
-        blocksPath.ensure(coordinator.client().getZookeeperClient());
+      coordinator = new ZkCoordinator(zkConnect, serverId);
 
-        MetaStore metaStore = new MetaStore(coordinator.client());
-        PlacementService placementService = new PlacementService(coordinator.client(), replication);
-        MetadataServiceImpl service = new MetadataServiceImpl(coordinator, metaStore, placementService);
+      EnsurePath filesPath = new EnsurePath(MetaStore.FILES);
+      EnsurePath blocksPath = new EnsurePath(MetaStore.BLOCKS);
+      EnsurePath leaderPath = new EnsurePath("/ds/metadata/leader");
+      filesPath.ensure(coordinator.client().getZookeeperClient());
+      blocksPath.ensure(coordinator.client().getZookeeperClient());
+      leaderPath.ensure(coordinator.client().getZookeeperClient());
 
-        Server server =
-            NettyServerBuilder.forPort(port)
-                .addService(service)
-                .addService(ProtoReflectionService.newInstance())
-                .build()
-                .start();
+      MetaStore metaStore = new MetaStore(coordinator.client());
+      PlacementService placementService = new PlacementService(coordinator.client(), replication);
+      MetadataServiceImpl service = new MetadataServiceImpl(metaStore, placementService, coordinator);
+      HealingPlanner planner =
+          new HealingPlanner(coordinator.client(), placementService, metaStore, replication);
+      final ZkCoordinator coordRef = coordinator;
+      final HealingPlanner plannerRef = planner;
+      healExec = Executors.newSingleThreadScheduledExecutor();
+      healExec.scheduleAtFixedRate(
+          () -> {
+            if (coordRef.isLeader()) {
+              plannerRef.run();
+            }
+          },
+          5,
+          10,
+          TimeUnit.SECONDS);
 
-        System.out.println("[MetadataServer] gRPC started on :" + port + " (Stage 2)");
+      metricsExec = Executors.newScheduledThreadPool(1);
+      metricsExec.scheduleAtFixedRate(
+          new NtpSync("pool.ntp.org", 123), 1, 600, TimeUnit.SECONDS);
+      metricsExec.scheduleAtFixedRate(Metrics::dumpCsv, 5, 5, TimeUnit.SECONDS);
 
-        Runtime.getRuntime()
-            .addShutdownHook(
-                new Thread(
-                    () -> {
-                      System.out.println("[MetadataServer] Shutdown signal received");
-                      server.shutdown();
-                    }));
-
-        server.awaitTermination();
+      Counter leaderChanges = Metrics.counter("leader_changes");
+      String leaderEndpoint = host + ":" + port;
+      final ZkCoordinator listenerCoord = coordinator;
+      coordinator.addLeadershipListener(
+          isLeader -> {
+            leaderChanges.increment();
+            if (isLeader) {
+              listenerCoord.publishLeaderEndpoint(leaderEndpoint);
+            } else {
+              listenerCoord.clearLeaderEndpoint();
+            }
+          });
+      if (listenerCoord.isLeader()) {
+        leaderChanges.increment();
+        listenerCoord.publishLeaderEndpoint(leaderEndpoint);
       }
+
+      server =
+          NettyServerBuilder.forPort(port)
+              .addService(service)
+              .addService(ProtoReflectionService.newInstance())
+              .build()
+              .start();
+
+      System.out.println("[MetadataServer] gRPC started on :" + port + " (Stage 2)");
+
+      ZkCoordinator coordForHook = coordinator;
+      ScheduledExecutorService healExecForHook = healExec;
+      ScheduledExecutorService metricsExecForHook = metricsExec;
+      Server serverForHook = server;
+      Runtime.getRuntime()
+          .addShutdownHook(
+              new Thread(
+                  () -> {
+                    System.out.println("Shutting down gracefully…");
+                    try {
+                      if (serverForHook != null) {
+                        serverForHook.shutdown();
+                        serverForHook.awaitTermination(5, TimeUnit.SECONDS);
+                      }
+                    } catch (Exception ignored) {
+                      // ignored
+                    }
+                    try {
+                      if (healExecForHook != null) {
+                        healExecForHook.shutdownNow();
+                      }
+                    } catch (Exception ignored) {
+                      // ignored
+                    }
+                    try {
+                      if (metricsExecForHook != null) {
+                        metricsExecForHook.shutdownNow();
+                      }
+                    } catch (Exception ignored) {
+                      // ignored
+                    }
+                    try {
+                      if (coordForHook != null) {
+                        coordForHook.close();
+                      }
+                    } catch (Exception ignored) {
+                      // ignored
+                    }
+                    System.out.println("Shutdown complete.");
+                  }));
+
+      server.awaitTermination();
     } catch (Exception e) {
       e.printStackTrace();
       System.exit(1);
+    } finally {
+      if (healExec != null) {
+        healExec.shutdownNow();
+      }
+      if (metricsExec != null) {
+        metricsExec.shutdownNow();
+      }
+      if (server != null) {
+        server.shutdown();
+      }
+      if (coordinator != null) {
+        try {
+          coordinator.close();
+        } catch (Exception ignore) {
+          // ignore
+        }
+      }
     }
   }
 

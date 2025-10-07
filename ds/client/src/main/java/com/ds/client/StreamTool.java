@@ -1,5 +1,6 @@
 package com.ds.client;
 
+import com.ds.common.VectorClock;
 import com.google.protobuf.ByteString;
 import ds.BlockChunk;
 import ds.GetHdr;
@@ -19,9 +20,20 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 public final class StreamTool {
+  private static final String DEFAULT_CLIENT_ID =
+      System.getProperty("ds.client.id", defaultClientId());
+
   private StreamTool() {}
 
   public static void put(String host, int port, String blockId, Path file) throws Exception {
+    VectorClock vc = new VectorClock();
+    vc.increment(DEFAULT_CLIENT_ID);
+    put(host, port, blockId, file, vc.toJson(), DEFAULT_CLIENT_ID);
+  }
+
+  public static void put(
+      String host, int port, String blockId, Path file, String vectorClockJson, String clientId)
+      throws Exception {
     ManagedChannel channel =
         ManagedChannelBuilder.forAddress(host, port).usePlaintext().build();
     StorageServiceGrpc.StorageServiceStub stub = StorageServiceGrpc.newStub(channel);
@@ -54,13 +66,16 @@ public final class StreamTool {
 
     StreamObserver<PutRequest> requestObserver = stub.putBlock(ackObserver);
 
+    String vc = vectorClockJson == null ? new VectorClock().toJson() : vectorClockJson;
+    String client = (clientId == null || clientId.isBlank()) ? DEFAULT_CLIENT_ID : clientId;
+
     requestObserver.onNext(
         PutRequest.newBuilder()
             .setOpen(
                 PutOpen.newBuilder()
                     .setBlockId(blockId)
-                    .setVectorClock("{}")
-                    .setClientId("cli")
+                    .setVectorClock(vc)
+                    .setClientId(client)
                     .setSize(Files.size(file))
                     .build())
             .build());
@@ -109,5 +124,13 @@ public final class StreamTool {
       }
     }
     channel.shutdownNow();
+  }
+
+  private static String defaultClientId() {
+    try {
+      return java.net.InetAddress.getLocalHost().getHostName();
+    } catch (Exception e) {
+      return "cli-" + java.util.UUID.randomUUID();
+    }
   }
 }

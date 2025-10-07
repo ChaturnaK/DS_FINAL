@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.api.transaction.CuratorTransactionFinal;
@@ -87,9 +88,32 @@ public class MetaStore {
   }
 
   public void commit(String path, FileEntry fe, Map<String, BlockEntry> blocks) throws Exception {
-    CuratorTransactionFinal tx = zk.inTransaction().check().forPath(FILES).and();
     String fp = FILES + "/" + esc(path);
     byte[] fbytes = JsonSerde.write(fe);
+    if (zk.checkExists().forPath(fp) != null) {
+      FileEntry cur = JsonSerde.read(zk.getData().forPath(fp), FileEntry.class);
+      boolean identical = Objects.equals(cur.blocks, fe.blocks) && cur.size == fe.size;
+      if (identical) {
+        boolean blocksIdentical = true;
+        for (Map.Entry<String, BlockEntry> entry : blocks.entrySet()) {
+          String bp = BLOCKS + "/" + entry.getKey();
+          if (zk.checkExists().forPath(bp) == null) {
+            blocksIdentical = false;
+            break;
+          }
+          BlockEntry existing = JsonSerde.read(zk.getData().forPath(bp), BlockEntry.class);
+          if (!Objects.equals(existing.replicas, entry.getValue().replicas)
+              || existing.size != entry.getValue().size) {
+            blocksIdentical = false;
+            break;
+          }
+        }
+        if (blocksIdentical) {
+          return;
+        }
+      }
+    }
+    CuratorTransactionFinal tx = zk.inTransaction().check().forPath(FILES).and();
     if (zk.checkExists().forPath(fp) == null) {
       tx = tx.create().forPath(fp, fbytes).and();
     } else {
