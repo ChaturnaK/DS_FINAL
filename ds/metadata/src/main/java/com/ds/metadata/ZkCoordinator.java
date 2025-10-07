@@ -1,5 +1,8 @@
 package com.ds.metadata;
 
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.recipes.leader.LeaderLatch;
@@ -15,6 +18,7 @@ public class ZkCoordinator implements AutoCloseable {
   private final CuratorFramework client;
   private final LeaderLatch leaderLatch;
   private static final String STORAGE_NODES_PATH = "/ds/nodes/storage";
+  private final List<Consumer<Boolean>> leaderListeners = new CopyOnWriteArrayList<>();
 
   public ZkCoordinator(String zk, String id) throws Exception {
     this.client =
@@ -27,11 +31,13 @@ public class ZkCoordinator implements AutoCloseable {
           @Override
           public void isLeader() {
             log.info("Leadership granted for {}", id);
+            notifyLeaderListeners(true);
           }
 
           @Override
           public void notLeader() {
             log.info("Leadership revoked for {}", id);
+            notifyLeaderListeners(false);
           }
         });
     this.leaderLatch.start();
@@ -44,6 +50,12 @@ public class ZkCoordinator implements AutoCloseable {
 
   public boolean isLeader() {
     return leaderLatch.hasLeadership();
+  }
+
+  public void addLeadershipListener(Consumer<Boolean> listener) {
+    if (listener != null) {
+      leaderListeners.add(listener);
+    }
   }
 
   @Override
@@ -69,6 +81,16 @@ public class ZkCoordinator implements AutoCloseable {
           .forPath(STORAGE_NODES_PATH);
     } catch (Exception e) {
       log.warn("Failed to set watcher on {}: {}", STORAGE_NODES_PATH, e.toString());
+    }
+  }
+
+  private void notifyLeaderListeners(boolean isLeader) {
+    for (Consumer<Boolean> listener : leaderListeners) {
+      try {
+        listener.accept(isLeader);
+      } catch (Exception e) {
+        log.warn("Leader listener error: {}", e.toString());
+      }
     }
   }
 }

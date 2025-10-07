@@ -1,17 +1,17 @@
 package com.ds.metadata;
 
+import com.ds.common.Metrics;
 import ds.Ack;
 import ds.GetHdr;
 import ds.StorageServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
+import java.util.List;
+import java.util.Optional;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.zookeeper.KeeperException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.List;
-import java.util.Optional;
 
 public class HealingPlanner implements Runnable {
   private static final Logger log = LoggerFactory.getLogger(HealingPlanner.class);
@@ -31,6 +31,7 @@ public class HealingPlanner implements Runnable {
 
   @Override
   public void run() {
+    double backlog = 0.0;
     try {
       if (zk.checkExists().forPath(zkRootBlocks) == null) {
         return;
@@ -41,6 +42,7 @@ public class HealingPlanner implements Runnable {
           continue;
         }
         if (be.replicas.size() < replication) {
+          backlog++;
           log.warn(
               "Under-replicated block {} have={} need={}",
               blockId,
@@ -96,6 +98,8 @@ public class HealingPlanner implements Runnable {
       // ignore
     } catch (Exception e) {
       log.error("HealingPlanner run() error {}", e.toString());
+    } finally {
+      Metrics.gauge("replication_backlog", backlog);
     }
   }
 }

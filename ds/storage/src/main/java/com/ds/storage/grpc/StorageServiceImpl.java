@@ -1,5 +1,6 @@
 package com.ds.storage.grpc;
 
+import com.ds.common.Metrics;
 import com.ds.common.VectorClock;
 import com.ds.storage.BlockStore;
 import com.ds.storage.Replicator;
@@ -14,9 +15,11 @@ import ds.PutRequest;
 import ds.StorageServiceGrpc;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import io.micrometer.core.instrument.Timer;
 import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBase {
   private final BlockStore store;
@@ -33,6 +36,8 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
       String blockId;
       String vectorClock;
       final List<byte[]> chunks = new ArrayList<>();
+      final long start = System.nanoTime();
+      final Timer timer = Metrics.timer("put_latency_ms");
 
       @Override
       public void onNext(PutRequest request) {
@@ -56,12 +61,12 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
 
       @Override
       public void onCompleted() {
-        if (blockId == null || blockId.isBlank()) {
-          responseObserver.onError(
-              Status.INVALID_ARGUMENT.withDescription("Missing blockId").asRuntimeException());
-          return;
-        }
         try {
+          if (blockId == null || blockId.isBlank()) {
+            responseObserver.onError(
+                Status.INVALID_ARGUMENT.withDescription("Missing blockId").asRuntimeException());
+            return;
+          }
           VectorClock incoming = VectorClock.fromJson(vectorClock);
           BlockStore.Meta meta = store.readMetaObj(blockId);
           if (meta.vectorClock == null) {
@@ -149,6 +154,8 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
         } catch (Exception e) {
           responseObserver.onError(
               Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+        } finally {
+          timer.record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
         }
       }
     };
@@ -157,6 +164,8 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
   @Override
   public void getBlock(GetHdr request, StreamObserver<GetResponse> responseObserver) {
     String blockId = request.getBlockId();
+    long bytes = 0L;
+    long start = System.nanoTime();
     try {
       BlockStore.Meta baseMeta = store.readMetaObj(blockId);
       String chosen = blockId;
@@ -179,11 +188,17 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
         if (buf.length == 0) {
           continue;
         }
+        bytes += buf.length;
         GetResponse chunkResp =
             GetResponse.newBuilder()
                 .setChunk(BlockChunk.newBuilder().setData(com.google.protobuf.ByteString.copyFrom(buf)))
                 .build();
         responseObserver.onNext(chunkResp);
+      }
+      long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+      if (elapsedMs > 0) {
+        double throughput = (bytes / 1_000_000.0) / (elapsedMs / 1000.0);
+        Metrics.gauge("get_throughput_mb_s", throughput);
       }
       responseObserver.onCompleted();
     } catch (Exception e) {

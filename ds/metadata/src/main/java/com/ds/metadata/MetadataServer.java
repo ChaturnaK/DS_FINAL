@@ -1,9 +1,12 @@
 package com.ds.metadata;
 
+import com.ds.common.Metrics;
 import com.ds.metadata.grpc.MetadataServiceImpl;
+import com.ds.time.NtpSync;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
 import io.grpc.protobuf.services.ProtoReflectionService;
+import io.micrometer.core.instrument.Counter;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
@@ -66,6 +69,20 @@ public class MetadataServer {
             10,
             TimeUnit.SECONDS);
 
+        ScheduledExecutorService metricsExec = Executors.newScheduledThreadPool(1);
+        metricsExec.scheduleAtFixedRate(
+            new NtpSync("pool.ntp.org", 123), 1, 600, TimeUnit.SECONDS);
+        metricsExec.scheduleAtFixedRate(Metrics::dumpCsv, 5, 5, TimeUnit.SECONDS);
+
+        Counter leaderChanges = Metrics.counter("leader_changes");
+        coordinator.addLeadershipListener(
+            isLeader -> {
+              leaderChanges.increment();
+            });
+        if (coordinator.isLeader()) {
+          leaderChanges.increment();
+        }
+
         Server server =
             NettyServerBuilder.forPort(port)
                 .addService(service)
@@ -81,11 +98,13 @@ public class MetadataServer {
                     () -> {
                       System.out.println("[MetadataServer] Shutdown signal received");
                       healExec.shutdownNow();
+                      metricsExec.shutdownNow();
                       server.shutdown();
                     }));
 
         server.awaitTermination();
         healExec.shutdownNow();
+        metricsExec.shutdownNow();
       }
     } catch (Exception e) {
       e.printStackTrace();
