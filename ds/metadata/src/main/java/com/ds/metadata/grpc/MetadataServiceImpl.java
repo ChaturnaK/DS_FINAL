@@ -1,11 +1,14 @@
 package com.ds.metadata.grpc;
 
 import com.ds.metadata.MetaStore;
+import com.ds.metadata.MetaStore.BlockEntry;
+import com.ds.metadata.MetaStore.FileEntry;
 import com.ds.metadata.PlacementService;
 import com.ds.metadata.PlacementService.NodeInfo;
 import com.ds.metadata.ZkCoordinator;
 import ds.Ack;
 import ds.BlockPlan;
+import ds.CommitBlock;
 import ds.CommitReq;
 import ds.FilePath;
 import ds.LocateResp;
@@ -85,7 +88,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
   @Override
   public void locate(FilePath request, StreamObserver<LocateResp> responseObserver) {
     try {
-      Optional<MetaStore.FileEntry> feOpt = metaStore.getFile(request.getPath());
+      Optional<FileEntry> feOpt = metaStore.getFile(request.getPath());
       if (feOpt.isEmpty()) {
         responseObserver.onError(
             Status.NOT_FOUND
@@ -94,10 +97,10 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
         return;
       }
 
-      MetaStore.FileEntry fe = feOpt.get();
+      FileEntry fe = feOpt.get();
       LocateResp.Builder resp = LocateResp.newBuilder().setSize(fe.size);
       for (String blockId : fe.blocks) {
-        Optional<MetaStore.BlockEntry> beOpt = metaStore.getBlock(blockId);
+        Optional<BlockEntry> beOpt = metaStore.getBlock(blockId);
         if (beOpt.isEmpty()) {
           responseObserver.onError(
               Status.NOT_FOUND
@@ -105,7 +108,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
                   .asRuntimeException());
           return;
         }
-        MetaStore.BlockEntry be = beOpt.get();
+        BlockEntry be = beOpt.get();
         BlockPlan.Builder blockPlan = BlockPlan.newBuilder().setBlockId(blockId).setSize(be.size);
         blockPlan.addAllReplicaUrls(be.replicas);
         resp.addBlocks(blockPlan);
@@ -125,7 +128,7 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
       notLeader(responseObserver);
       return;
     }
-    if (request.getBlockIdsCount() == 0) {
+    if (request.getBlocksCount() == 0) {
       responseObserver.onError(
           Status.INVALID_ARGUMENT.withDescription("No blocks supplied").asRuntimeException());
       return;
@@ -133,48 +136,27 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
 
     try {
       long now = System.currentTimeMillis();
-      MetaStore.FileEntry fileEntry = new MetaStore.FileEntry();
-      fileEntry.blocks = new ArrayList<>(request.getBlockIdsList());
+      FileEntry fileEntry = new FileEntry();
       fileEntry.size = request.getSize();
-      Optional<MetaStore.FileEntry> existing = metaStore.getFile(request.getPath());
-      fileEntry.ctime = existing.map(fe -> fe.ctime).orElse(now);
+      fileEntry.ctime = now;
       fileEntry.mtime = now;
 
-      Map<String, MetaStore.BlockEntry> blocks = new LinkedHashMap<>();
-      long blockCount = request.getBlockIdsCount();
-      long fileSize = request.getSize();
-      long chunkSize = blockCount == 0 ? 0 : (long) Math.ceil(fileSize / (double) blockCount);
-      long remaining = fileSize;
-
-      for (int i = 0; i < blockCount; i++) {
-        String blockId = request.getBlockIds(i);
-        MetaStore.BlockEntry blockEntry = new MetaStore.BlockEntry();
-        long blockSize;
-        if (blockCount == 1) {
-          blockSize = fileSize;
-        } else if (i == blockCount - 1) {
-          blockSize = Math.max(remaining, 0);
-        } else {
-          blockSize = Math.min(chunkSize, remaining);
-        }
-        remaining = Math.max(0, remaining - blockSize);
-        blockEntry.size = blockSize;
-
-        List<NodeInfo> replicas = placementService.chooseReplicas(blockId);
-        for (NodeInfo ni : replicas) {
-          blockEntry.replicas.add(ni.id != null ? ni.id : (ni.host + ":" + ni.port));
-        }
-        blocks.put(blockId, blockEntry);
+      Map<String, BlockEntry> blocks = new LinkedHashMap<>();
+      List<String> blockIds = new ArrayList<>();
+      for (CommitBlock block : request.getBlocksList()) {
+        blockIds.add(block.getBlockId());
+        BlockEntry blockEntry = new BlockEntry();
+        blockEntry.size = block.getSize();
+        blockEntry.replicas.addAll(block.getReplicasList());
+        blocks.put(block.getBlockId(), blockEntry);
       }
+      fileEntry.blocks = blockIds;
 
       metaStore.commit(request.getPath(), fileEntry, blocks);
 
-      Ack ack = Ack.newBuilder().setOk(true).setMsg("committed").build();
+      Ack ack = Ack.newBuilder().setOk(true).setMsg("Committed").build();
       responseObserver.onNext(ack);
       responseObserver.onCompleted();
-    } catch (IllegalStateException e) {
-      responseObserver.onError(
-          Status.FAILED_PRECONDITION.withDescription(e.getMessage()).asRuntimeException());
     } catch (Exception e) {
       responseObserver.onError(
           Status.INTERNAL.withDescription("Commit failed").withCause(e).asRuntimeException());

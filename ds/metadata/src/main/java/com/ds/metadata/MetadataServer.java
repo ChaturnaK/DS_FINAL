@@ -7,13 +7,10 @@ import io.grpc.protobuf.services.ProtoReflectionService;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import org.apache.curator.utils.EnsurePath;
 
 public class MetadataServer {
-  private static final Logger log = LoggerFactory.getLogger(MetadataServer.class);
-
-  public static void main(String[] args) throws Exception {
+  public static void main(String[] args) {
     int port = 7000;
     String zkConnect = "localhost:2181";
     int replication = 3;
@@ -36,40 +33,46 @@ public class MetadataServer {
           }
           break;
         default:
-          // ignore
+          // ignore unknown args
       }
     }
 
-    String host = resolveLocalHost();
-    String serverId = host + ":" + port + ":" + UUID.randomUUID();
+    try {
+      String host = resolveLocalHost();
+      String serverId = host + ":" + port + ":" + UUID.randomUUID();
 
-    try (ZkCoordinator coordinator = new ZkCoordinator(zkConnect, serverId)) {
-      MetaStore metaStore = new MetaStore(coordinator.client());
-      metaStore.ensureRoots();
-      PlacementService placementService = new PlacementService(coordinator.client(), replication);
+      try (ZkCoordinator coordinator = new ZkCoordinator(zkConnect, serverId)) {
+        EnsurePath filesPath = new EnsurePath(MetaStore.FILES);
+        EnsurePath blocksPath = new EnsurePath(MetaStore.BLOCKS);
+        filesPath.ensure(coordinator.client().getZookeeperClient());
+        blocksPath.ensure(coordinator.client().getZookeeperClient());
 
-      MetadataServiceImpl service =
-          new MetadataServiceImpl(coordinator, metaStore, placementService);
+        MetaStore metaStore = new MetaStore(coordinator.client());
+        PlacementService placementService = new PlacementService(coordinator.client(), replication);
+        MetadataServiceImpl service = new MetadataServiceImpl(coordinator, metaStore, placementService);
 
-      Server server =
-          NettyServerBuilder.forPort(port)
-              .addService(service)
-              .addService(ProtoReflectionService.newInstance())
-              .build()
-              .start();
+        Server server =
+            NettyServerBuilder.forPort(port)
+                .addService(service)
+                .addService(ProtoReflectionService.newInstance())
+                .build()
+                .start();
 
-      log.info("gRPC MetadataService started on :{} (Stage 2)", port);
-      log.info("ZooKeeper connection: {} | serverId={} | replication={} ", zkConnect, serverId, replication);
+        System.out.println("[MetadataServer] gRPC started on :" + port + " (Stage 2)");
 
-      Runtime.getRuntime()
-          .addShutdownHook(
-              new Thread(
-                  () -> {
-                    log.info("Shutdown signal received, stopping metadata server...");
-                    server.shutdown();
-                  }));
+        Runtime.getRuntime()
+            .addShutdownHook(
+                new Thread(
+                    () -> {
+                      System.out.println("[MetadataServer] Shutdown signal received");
+                      server.shutdown();
+                    }));
 
-      server.awaitTermination();
+        server.awaitTermination();
+      }
+    } catch (Exception e) {
+      e.printStackTrace();
+      System.exit(1);
     }
   }
 

@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.Optional;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.api.transaction.CuratorTransactionFinal;
+import org.apache.zookeeper.KeeperException;
 
 public class MetaStore {
   public static final String FILES = "/ds/meta/files";
@@ -37,20 +38,24 @@ public class MetaStore {
   }
 
   public void ensureRoots() throws Exception {
-    if (zk.checkExists().forPath(FILES) == null) {
+    try {
       zk.create().creatingParentsIfNeeded().forPath(FILES);
+    } catch (KeeperException.NodeExistsException ignore) {
+      // already present
     }
-    if (zk.checkExists().forPath(BLOCKS) == null) {
+    try {
       zk.create().creatingParentsIfNeeded().forPath(BLOCKS);
+    } catch (KeeperException.NodeExistsException ignore) {
+      // already present
     }
   }
 
   public void putFile(String path, FileEntry fe) throws Exception {
     String p = FILES + "/" + esc(path);
     byte[] payload = JsonSerde.write(fe);
-    if (zk.checkExists().forPath(p) == null) {
+    try {
       zk.create().creatingParentsIfNeeded().forPath(p, payload);
-    } else {
+    } catch (KeeperException.NodeExistsException e) {
       zk.setData().forPath(p, payload);
     }
   }
@@ -66,9 +71,9 @@ public class MetaStore {
   public void putBlock(String blockId, BlockEntry be) throws Exception {
     String p = BLOCKS + "/" + blockId;
     byte[] payload = JsonSerde.write(be);
-    if (zk.checkExists().forPath(p) == null) {
+    try {
       zk.create().creatingParentsIfNeeded().forPath(p, payload);
-    } else {
+    } catch (KeeperException.NodeExistsException e) {
       zk.setData().forPath(p, payload);
     }
   }

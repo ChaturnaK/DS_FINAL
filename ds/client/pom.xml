@@ -15,15 +15,11 @@
 
   <dependencies>
     <dependency>
-      <groupId>com.ds</groupId>
+      <groupId>${project.groupId}</groupId>
       <artifactId>common</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-netty-shaded</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
+    <!-- gRPC client bits -->
     <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-stub</artifactId>
@@ -33,6 +29,17 @@
       <groupId>io.grpc</groupId>
       <artifactId>grpc-protobuf</artifactId>
       <version>${grpc.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
+    <!-- protobuf runtime for ByteString etc. -->
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protobuf-java</artifactId>
+      <version>${protobuf.version}</version>
     </dependency>
   </dependencies>
 </project>

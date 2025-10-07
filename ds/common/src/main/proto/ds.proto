@@ -10,7 +10,8 @@ message PlanPutReq { string path = 1; int64 size = 2; int32 chunkSize = 3; }
 message BlockPlan { string blockId = 1; repeated string replicaUrls = 2; int64 size = 3; }
 message PlanPutResp { repeated BlockPlan blocks = 1; }
 message LocateResp { repeated BlockPlan blocks = 1; int64 size = 2; }
-message CommitReq { string path = 1; repeated string blockIds = 2; int64 size = 3; }
+message CommitBlock { string blockId = 1; int64 size = 2; repeated string replicas = 3; }
+message CommitReq { string path = 1; int64 size = 2; repeated CommitBlock blocks = 3; }
 message Ack { bool ok = 1; string msg = 2; }
 
 service MetadataService {
