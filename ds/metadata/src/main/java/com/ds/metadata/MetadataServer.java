@@ -49,7 +49,7 @@ public class MetadataServer {
 
         MetaStore metaStore = new MetaStore(coordinator.client());
         PlacementService placementService = new PlacementService(coordinator.client(), replication);
-        MetadataServiceImpl service = new MetadataServiceImpl(coordinator, metaStore, placementService);
+        MetadataServiceImpl service = new MetadataServiceImpl(metaStore, placementService, coordinator);
 
         Server server =
             NettyServerBuilder.forPort(port)
