@@ -7,6 +7,9 @@ import io.grpc.protobuf.services.ProtoReflectionService;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import org.apache.curator.utils.EnsurePath;
 
 public class MetadataServer {
@@ -49,7 +52,19 @@ public class MetadataServer {
 
         MetaStore metaStore = new MetaStore(coordinator.client());
         PlacementService placementService = new PlacementService(coordinator.client(), replication);
-        MetadataServiceImpl service = new MetadataServiceImpl(coordinator, metaStore, placementService);
+        MetadataServiceImpl service = new MetadataServiceImpl(metaStore, placementService, coordinator);
+        HealingPlanner planner =
+            new HealingPlanner(coordinator.client(), placementService, metaStore, replication);
+        ScheduledExecutorService healExec = Executors.newSingleThreadScheduledExecutor();
+        healExec.scheduleAtFixedRate(
+            () -> {
+              if (coordinator.isLeader()) {
+                planner.run();
+              }
+            },
+            5,
+            10,
+            TimeUnit.SECONDS);
 
         Server server =
             NettyServerBuilder.forPort(port)
@@ -65,10 +80,12 @@ public class MetadataServer {
                 new Thread(
                     () -> {
                       System.out.println("[MetadataServer] Shutdown signal received");
+                      healExec.shutdownNow();
                       server.shutdown();
                     }));
 
         server.awaitTermination();
+        healExec.shutdownNow();
       }
     } catch (Exception e) {
       e.printStackTrace();
