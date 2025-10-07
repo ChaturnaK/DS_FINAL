@@ -27,44 +27,23 @@ CLIENT_CP="client/target/classes:client/target/*:common/target/classes:common/ta
 METADATA_CP="metadata/target/classes:metadata/target/*:common/target/classes:common/target/*"
 STORAGE_CP="storage/target/classes:storage/target/*:common/target/classes:common/target/*"
 
-# Helper to find free port
-find_free_port() {
-  local p="$1"
-  while nc -z localhost "$p" >/dev/null 2>&1; do
-    p=$((p+1))
-  done
-  echo "$p"
-}
-
-# Pick two metadata ports
-MS1_PORT="$(find_free_port 7000)"
-MS2_PORT="$(find_free_port $((MS1_PORT+1)))"
-echo "Using metadata ports: $MS1_PORT, $MS2_PORT"
-
 java -cp "$METADATA_CP" com.ds.metadata.MetadataServer \
-  --port "$MS1_PORT" --zk localhost:2181 --replication 3 > logs-ms1.txt 2>&1 &
+  --port 7000 --zk localhost:2181 --replication 3 > logs-ms1.txt 2>&1 &
 MS1=$!
 java -cp "$METADATA_CP" com.ds.metadata.MetadataServer \
-  --port "$MS2_PORT" --zk localhost:2181 --replication 3 > logs-ms2.txt 2>&1 &
+  --port 7001 --zk localhost:2181 --replication 3 > logs-ms2.txt 2>&1 &
 MS2=$!
 
 export CHAOS_DROP_PCT=${CHAOS_DROP_PCT:-5}
 export CHAOS_DELAY_MS=${CHAOS_DELAY_MS:-10}
-
-# Pick three storage ports
-SN1_PORT="$(find_free_port 8001)"
-SN2_PORT="$(find_free_port $((SN1_PORT+1)))"
-SN3_PORT="$(find_free_port $((SN2_PORT+1)))"
-echo "Using storage ports: $SN1_PORT, $SN2_PORT, $SN3_PORT"
-
 java -cp "$STORAGE_CP" com.ds.storage.StorageNode \
-  --port "$SN1_PORT" --data ./data/node1 --zone z1 --zk localhost:2181 > logs-sn1.txt 2>&1 &
+  --port 8001 --data ./data/node1 --zone z1 --zk localhost:2181 > logs-sn1.txt 2>&1 &
 SN1=$!
 java -cp "$STORAGE_CP" com.ds.storage.StorageNode \
-  --port "$SN2_PORT" --data ./data/node2 --zone z2 --zk localhost:2181 > logs-sn2.txt 2>&1 &
+  --port 8002 --data ./data/node2 --zone z2 --zk localhost:2181 > logs-sn2.txt 2>&1 &
 SN2=$!
 java -cp "$STORAGE_CP" com.ds.storage.StorageNode \
-  --port "$SN3_PORT" --data ./data/node3 --zone z3 --zk localhost:2181 > logs-sn3.txt 2>&1 &
+  --port 8003 --data ./data/node3 --zone z3 --zk localhost:2181 > logs-sn3.txt 2>&1 &
 SN3=$!
 
 sleep 5
@@ -105,7 +84,7 @@ cmp /tmp/demo512.bin ./download.bin && echo "OK download quorum"
 
 echo "==== Step 5: Kill metadata leader mid-PlanPut; client should retry to new leader ===="
 LEADER=$(java -Dds.zk=localhost:2181 -cp "$CLIENT_CP" com.ds.client.DsClient leader 2>/dev/null || echo "")
-if [[ "$LEADER" == *":$MS2_PORT" ]]; then
+if [[ "$LEADER" == *":7001" ]]; then
   kill -9 "$MS2" 2>/dev/null || true
 else
   kill -9 "$MS1" 2>/dev/null || true
