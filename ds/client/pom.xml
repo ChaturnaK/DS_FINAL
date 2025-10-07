@@ -14,12 +14,19 @@
   <packaging>jar</packaging>
 
   <dependencies>
+    <!-- Bring in generated proto classes -->
     <dependency>
       <groupId>${project.groupId}</groupId>
       <artifactId>common</artifactId>
       <version>${project.version}</version>
     </dependency>
-    <!-- gRPC client bits -->
+
+    <!-- gRPC runtime -->
+    <dependency>
+      <groupId>io.grpc</groupId>
+      <artifactId>grpc-netty-shaded</artifactId>
+      <version>${grpc.version}</version>
+    </dependency>
     <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-stub</artifactId>
@@ -30,16 +37,42 @@
       <artifactId>grpc-protobuf</artifactId>
       <version>${grpc.version}</version>
     </dependency>
-    <dependency>
-      <groupId>io.grpc</groupId>
-      <artifactId>grpc-netty-shaded</artifactId>
-      <version>${grpc.version}</version>
-    </dependency>
+
     <!-- protobuf runtime for ByteString etc. -->
     <dependency>
       <groupId>com.google.protobuf</groupId>
       <artifactId>protobuf-java</artifactId>
       <version>${protobuf.version}</version>
     </dependency>
+
+    <!-- Logging (if not inherited) -->
+    <dependency>
+      <groupId>ch.qos.logback</groupId>
+      <artifactId>logback-classic</artifactId>
+      <version>1.4.14</version>
+    </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.6.1</version>
+        <executions>
+          <execution>
+            <id>copy-dependencies</id>
+            <phase>package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${project.build.directory}</outputDirectory>
+              <includeScope>runtime</includeScope>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
 </project>

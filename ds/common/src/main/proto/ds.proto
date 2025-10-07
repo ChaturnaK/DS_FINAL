@@ -20,15 +20,34 @@ service MetadataService {
   rpc Commit(CommitReq) returns (Ack);
 }
 
-message PutHdr { string blockId = 1; string vectorClock = 2; string clientId = 3; }
 message PutAck { bool ok = 1; string checksum = 2; string msg = 3; }
 message GetHdr { string blockId = 1; int32 minR = 2; }
 message BlockChunk { bytes data = 1; }
 message GetMeta { string vectorClock = 1; string checksum = 2; }
 
+message PutOpen {
+  string blockId = 1;
+  string vectorClock = 2;
+  string clientId = 3;
+  int64 size = 4;
+}
+
+message PutRequest {
+  oneof payload {
+    PutOpen open = 1;
+    BlockChunk chunk = 2;
+  }
+}
+
+message GetResponse {
+  oneof payload {
+    GetMeta meta = 1;
+    BlockChunk chunk = 2;
+  }
+}
+
 service StorageService {
-  // For Stage 1, we won’t implement streaming bodies yet—just placeholders.
-  rpc PutBlock(PutHdr) returns (PutAck);
-  rpc GetBlock(GetHdr) returns (GetMeta);
+  rpc PutBlock(stream PutRequest) returns (PutAck);
+  rpc GetBlock(GetHdr) returns (stream GetResponse);
   rpc ReplicateBlock(GetHdr) returns (Ack);
 }

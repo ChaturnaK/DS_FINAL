@@ -8,6 +8,9 @@ import io.grpc.protobuf.services.ProtoReflectionService;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
@@ -54,33 +57,62 @@ public class StorageNode {
       }
     }
 
+    System.setProperty("ds.data.dir", dataDir);
+
     Path dataPath = Paths.get(dataDir);
     Files.createDirectories(dataPath);
     long freeBytes = Files.getFileStore(dataPath).getUsableSpace();
 
     String host = java.net.InetAddress.getLocalHost().getHostName();
     String nodeId = host + ":" + port;
+    String nodePath = STORAGE_NODES_PATH + "/" + nodeId;
 
     CuratorFramework curator =
         CuratorFrameworkFactory.newClient(zkConnect, new ExponentialBackoffRetry(200, 10));
     curator.start();
     curator.blockUntilConnected();
 
-    registerNode(curator, nodeId, host, port, zone, freeBytes);
+    registerNode(curator, nodePath, host, port, zone, freeBytes);
+
+    BlockStore store = new BlockStore();
 
     Server server =
         NettyServerBuilder.forPort(port)
-            .addService(new StorageServiceImpl())
+            .addService(new StorageServiceImpl(store))
             .addService(ProtoReflectionService.newInstance())
             .build()
             .start();
 
     log.info(
-        "gRPC StorageService started on :{} (Stage 2), data={}, zone={}, zk={}",
+        "gRPC StorageService started on :{} (Stage 3), data={}, zone={}, zk={}",
         port,
         dataDir,
         zone,
         zkConnect);
+
+    ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor();
+    final String dataDirFinal = dataDir;
+    final String hostFinal = host;
+    final int portFinal = port;
+    final String zoneFinal = zone;
+    final CuratorFramework curatorFinal = curator;
+    final String nodePathFinal = nodePath;
+    ses.scheduleAtFixedRate(
+        () -> {
+          try {
+            long free = Files.getFileStore(Paths.get(dataDirFinal)).getUsableSpace();
+            String payload =
+                String.format(
+                    "{\"host\":\"%s\",\"port\":%d,\"zone\":\"%s\",\"freeBytes\":%d}",
+                    hostFinal, portFinal, zoneFinal, free);
+            curatorFinal.setData().forPath(nodePathFinal, payload.getBytes());
+          } catch (Exception e) {
+            log.warn("Failed to update storage node payload", e);
+          }
+        },
+        5,
+        5,
+        TimeUnit.SECONDS);
 
     AtomicBoolean shuttingDown = new AtomicBoolean(false);
     Runtime.getRuntime()
@@ -90,35 +122,41 @@ public class StorageNode {
                   if (shuttingDown.compareAndSet(false, true)) {
                     log.info("Shutdown signal received, stopping storage node {}", nodeId);
                     server.shutdown();
+                    ses.shutdown();
                     curator.close();
                   }
                 }));
 
     server.awaitTermination();
     if (shuttingDown.compareAndSet(false, true)) {
+      ses.shutdown();
       curator.close();
     }
   }
 
   private static void registerNode(
-      CuratorFramework curator, String nodeId, String host, int port, String zone, long freeBytes)
+      CuratorFramework curator,
+      String nodePath,
+      String host,
+      int port,
+      String zone,
+      long freeBytes)
       throws Exception {
     NodePayload payload = new NodePayload(host, port, zone, freeBytes);
     byte[] data = JsonSerde.write(payload);
-    String path = STORAGE_NODES_PATH + "/" + nodeId;
     try {
       curator
           .create()
           .creatingParentsIfNeeded()
           .withMode(CreateMode.EPHEMERAL)
-          .forPath(path, data);
+          .forPath(nodePath, data);
     } catch (KeeperException.NodeExistsException e) {
-      curator.delete().forPath(path);
+      curator.delete().forPath(nodePath);
       curator
           .create()
           .creatingParentsIfNeeded()
           .withMode(CreateMode.EPHEMERAL)
-          .forPath(path, data);
+          .forPath(nodePath, data);
     }
   }
 
