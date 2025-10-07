@@ -157,16 +157,16 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
               BlockStore.Meta sibling = new BlockStore.Meta();
               sibling.vectorClock = incoming.toJson();
               sibling.checksum = res.checksumHex;
-              sibling.primary = suffix;
+              sibling.primary = "";
               store.writeMetaObj(blockId + "." + suffix, sibling);
-              if (meta.primary == null) {
-                meta.primary = "";
-              }
+              meta.primary = suffix;
+              meta.vectorClock = incoming.toJson();
+              meta.checksum = res.checksumHex;
               store.writeMetaObj(blockId, meta);
               responseObserver.onNext(
                   PutAck.newBuilder()
                       .setOk(false)
-                      .setChecksum(meta.checksum)
+                      .setChecksum(res.checksumHex)
                       .setMsg("CONFLICT:" + suffix)
                       .build());
               responseObserver.onCompleted();

@@ -1,0 +1,93 @@
+PutAck: ok=false checksum=cc1fc87168b8a97b4dc509f7417ae18d68e550d517bc7409d60dafdb25368b37 msg=CONFLICT:b
+PutAck: ok=false checksum=cc1fc87168b8a97b4dc509f7417ae18d68e550d517bc7409d60dafdb25368b37 msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b0 ok=[Chaturnas-MacBook-Air.local:8001, Chaturnas-MacBook-Air.local:8002] fails=0
+PutAck: ok=false checksum=cc1fc87168b8a97b4dc509f7417ae18d68e550d517bc7409d60dafdb25368b37 msg=CONFLICT:b
+PutAck: ok=false checksum=eb3b27168c6107c851de652b5cb9a0277ef2132e08f51104c2de34e28a9e320b msg=CONFLICT:b
+PutAck: ok=false checksum=eb3b27168c6107c851de652b5cb9a0277ef2132e08f51104c2de34e28a9e320b msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b1 ok=[Chaturnas-MacBook-Air.local:8001, Chaturnas-MacBook-Air.local:8002] fails=0
+PutAck: ok=false checksum=eb3b27168c6107c851de652b5cb9a0277ef2132e08f51104c2de34e28a9e320b msg=CONFLICT:b
+PutAck: ok=false checksum=39b36b85d1d82ec868f8d2b8bd0accc2e1a98343b5ade253d3344f053b4e7b3c msg=CONFLICT:b
+PutAck: ok=false checksum=39b36b85d1d82ec868f8d2b8bd0accc2e1a98343b5ade253d3344f053b4e7b3c msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b2 ok=[Chaturnas-MacBook-Air.local:8001, Chaturnas-MacBook-Air.local:8002] fails=0
+PutAck: ok=false checksum=39b36b85d1d82ec868f8d2b8bd0accc2e1a98343b5ade253d3344f053b4e7b3c msg=CONFLICT:b
+PutAck: ok=false checksum=8d4a632156bf956a77b5224de7de0972673583c3283a578043df4683fc04ef24 msg=CONFLICT:b
+PutAck: ok=false checksum=8d4a632156bf956a77b5224de7de0972673583c3283a578043df4683fc04ef24 msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b3 ok=[Chaturnas-MacBook-Air.local:8003, Chaturnas-MacBook-Air.local:8002] fails=0
+PutAck: ok=false checksum=8d4a632156bf956a77b5224de7de0972673583c3283a578043df4683fc04ef24 msg=CONFLICT:b
+Oct 07, 2025 11:44:27 PM io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference cleanQueue
+SEVERE: *~*~*~ Previous channel ManagedChannelImpl{logId=42, target=Chaturnas-MacBook-Air.local:8001} was garbage collected without being shut down! ~*~*~*
+    Make sure to call shutdown()/shutdownNow()
+java.lang.RuntimeException: ManagedChannel allocation site
+	at io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference.<init>(ManagedChannelOrphanWrapper.java:102)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:60)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:51)
+	at io.grpc.internal.ManagedChannelImplBuilder.build(ManagedChannelImplBuilder.java:672)
+	at io.grpc.ForwardingChannelBuilder2.build(ForwardingChannelBuilder2.java:260)
+	at com.ds.client.StreamTool.put(StreamTool.java:38)
+	at com.ds.client.DsClient.lambda$main$1(DsClient.java:106)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1768)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1570)
+
+Oct 07, 2025 11:44:27 PM io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference cleanQueue
+SEVERE: *~*~*~ Previous channel ManagedChannelImpl{logId=19, target=Chaturnas-MacBook-Air.local:8003} was garbage collected without being shut down! ~*~*~*
+    Make sure to call shutdown()/shutdownNow()
+java.lang.RuntimeException: ManagedChannel allocation site
+	at io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference.<init>(ManagedChannelOrphanWrapper.java:102)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:60)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:51)
+	at io.grpc.internal.ManagedChannelImplBuilder.build(ManagedChannelImplBuilder.java:672)
+	at io.grpc.ForwardingChannelBuilder2.build(ForwardingChannelBuilder2.java:260)
+	at com.ds.client.StreamTool.put(StreamTool.java:38)
+	at com.ds.client.DsClient.lambda$main$1(DsClient.java:106)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1768)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1570)
+
+Oct 07, 2025 11:44:27 PM io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference cleanQueue
+SEVERE: *~*~*~ Previous channel ManagedChannelImpl{logId=30, target=Chaturnas-MacBook-Air.local:8003} was garbage collected without being shut down! ~*~*~*
+    Make sure to call shutdown()/shutdownNow()
+java.lang.RuntimeException: ManagedChannel allocation site
+	at io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference.<init>(ManagedChannelOrphanWrapper.java:102)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:60)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:51)
+	at io.grpc.internal.ManagedChannelImplBuilder.build(ManagedChannelImplBuilder.java:672)
+	at io.grpc.ForwardingChannelBuilder2.build(ForwardingChannelBuilder2.java:260)
+	at com.ds.client.StreamTool.put(StreamTool.java:38)
+	at com.ds.client.DsClient.lambda$main$1(DsClient.java:106)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1768)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1570)
+
+Oct 07, 2025 11:44:27 PM io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference cleanQueue
+SEVERE: *~*~*~ Previous channel ManagedChannelImpl{logId=5, target=Chaturnas-MacBook-Air.local:8003} was garbage collected without being shut down! ~*~*~*
+    Make sure to call shutdown()/shutdownNow()
+java.lang.RuntimeException: ManagedChannel allocation site
+	at io.grpc.internal.ManagedChannelOrphanWrapper$ManagedChannelReference.<init>(ManagedChannelOrphanWrapper.java:102)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:60)
+	at io.grpc.internal.ManagedChannelOrphanWrapper.<init>(ManagedChannelOrphanWrapper.java:51)
+	at io.grpc.internal.ManagedChannelImplBuilder.build(ManagedChannelImplBuilder.java:672)
+	at io.grpc.ForwardingChannelBuilder2.build(ForwardingChannelBuilder2.java:260)
+	at com.ds.client.StreamTool.put(StreamTool.java:38)
+	at com.ds.client.DsClient.lambda$main$1(DsClient.java:106)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1768)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1570)
+
+PutAck: ok=false checksum=4bb87f1de1f1732eddd94b7f49aa1dafa86937410883043045123c366c490df6 msg=CONFLICT:b
+PutAck: ok=false checksum=4bb87f1de1f1732eddd94b7f49aa1dafa86937410883043045123c366c490df6 msg=CONFLICT:b
+PutAck: ok=false checksum=4bb87f1de1f1732eddd94b7f49aa1dafa86937410883043045123c366c490df6 msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b4 ok=[Chaturnas-MacBook-Air.local:8003, Chaturnas-MacBook-Air.local:8002, Chaturnas-MacBook-Air.local:8001] fails=0
+PutAck: ok=false checksum=6b126e5dc47d9cdad3b06a733016aab08eadff327aa4a6885ecaf93f4fd02902 msg=CONFLICT:b
+PutAck: ok=false checksum=6b126e5dc47d9cdad3b06a733016aab08eadff327aa4a6885ecaf93f4fd02902 msg=CONFLICT:b
+PutAck: ok=false checksum=6b126e5dc47d9cdad3b06a733016aab08eadff327aa4a6885ecaf93f4fd02902 msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b5 ok=[Chaturnas-MacBook-Air.local:8002, Chaturnas-MacBook-Air.local:8003] fails=0
+PutAck: ok=false checksum=a17fff20c4105ff28c0f3aa3ea4b0293fde3edcf9bf9150461ab9bc18f20b9ab msg=CONFLICT:b
+PutAck: ok=false checksum=a17fff20c4105ff28c0f3aa3ea4b0293fde3edcf9bf9150461ab9bc18f20b9ab msg=CONFLICT:b
+PutAck: ok=false checksum=a17fff20c4105ff28c0f3aa3ea4b0293fde3edcf9bf9150461ab9bc18f20b9ab msg=CONFLICT:b
+[PUT quorum] block=/demo/big.bin#b6 ok=[Chaturnas-MacBook-Air.local:8003, Chaturnas-MacBook-Air.local:8002, Chaturnas-MacBook-Air.local:8001] fails=0
+Upload complete for /demo/big.bin

@@ -32,12 +32,19 @@ public class BlockStore {
     }
   }
 
+  private String sanitizedId(String blockId) {
+    if (blockId == null || blockId.isBlank()) {
+      return "";
+    }
+    return blockId.startsWith("/") ? blockId.substring(1) : blockId;
+  }
+
   public Path blockPath(String blockId) {
-    return blocksDir.resolve(blockId);
+    return blocksDir.resolve(sanitizedId(blockId));
   }
 
   public Path metaPath(String blockId) {
-    return metaDir.resolve(blockId + ".json");
+    return metaDir.resolve(sanitizedId(blockId) + ".json");
   }
 
   public static final class Meta {
@@ -60,19 +67,24 @@ public class BlockStore {
 
   public void writeMetaObj(String blockId, Meta meta) throws IOException {
     Meta m = meta == null ? new Meta() : meta;
+    Path mp = metaPath(blockId);
+    Path parent = mp.getParent();
+    if (parent != null) {
+      Files.createDirectories(parent);
+    }
     Files.writeString(
-        metaPath(blockId),
+        mp,
         new String(JsonSerde.write(m), StandardCharsets.UTF_8),
         StandardOpenOption.CREATE,
         StandardOpenOption.TRUNCATE_EXISTING);
   }
 
   public Path blockPathSibling(String blockId, String suffix) {
-    return blocksDir.resolve(blockId + "." + suffix);
+    return blocksDir.resolve(sanitizedId(blockId) + "." + suffix);
   }
 
   public Path metaPathSibling(String blockId, String suffix) {
-    return metaDir.resolve(blockId + "." + suffix + ".json");
+    return metaDir.resolve(sanitizedId(blockId) + "." + suffix + ".json");
   }
 
   public PutResult writeStreaming(String blockId, Iterable<byte[]> chunks) throws Exception {

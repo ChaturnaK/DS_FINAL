@@ -38,6 +38,7 @@ public class DsClient {
   private static final long READ_TIMEOUT_MS = Math.max(1L, Long.getLong("ds.quorum.timeout.read.ms", 15_000L));
   private static final String CLIENT_ID =
       System.getProperty("ds.client.id", defaultClientId());
+  private static final String CLIENT_EPOCH = CLIENT_ID + "#" + java.util.UUID.randomUUID();
   private static final ConcurrentHashMap<String, VectorClock> BLOCK_CLOCKS =
       new ConcurrentHashMap<>();
 
@@ -366,6 +367,7 @@ public class DsClient {
             (k, existing) -> {
               VectorClock clock = existing == null ? new VectorClock() : existing;
               clock.increment(CLIENT_ID);
+              clock.increment(CLIENT_EPOCH);
               return clock;
             });
     return vc.toJson();

@@ -1,0 +1,4 @@
+[MetadataServer] gRPC started on :7000 (Stage 2)
+[NTP] offset_ms=711.93310546875
+Shutting down gracefully…
+Shutdown complete.

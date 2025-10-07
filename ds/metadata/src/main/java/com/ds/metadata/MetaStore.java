@@ -70,7 +70,7 @@ public class MetaStore {
   }
 
   public void putBlock(String blockId, BlockEntry be) throws Exception {
-    String p = BLOCKS + "/" + blockId;
+    String p = BLOCKS + "/" + esc(blockId);
     byte[] payload = JsonSerde.write(be);
     try {
       zk.create().creatingParentsIfNeeded().forPath(p, payload);
@@ -80,7 +80,7 @@ public class MetaStore {
   }
 
   public Optional<BlockEntry> getBlock(String blockId) throws Exception {
-    String p = BLOCKS + "/" + blockId;
+    String p = BLOCKS + "/" + esc(blockId);
     if (zk.checkExists().forPath(p) == null) {
       return Optional.empty();
     }
@@ -95,8 +95,8 @@ public class MetaStore {
       boolean identical = Objects.equals(cur.blocks, fe.blocks) && cur.size == fe.size;
       if (identical) {
         boolean blocksIdentical = true;
-        for (Map.Entry<String, BlockEntry> entry : blocks.entrySet()) {
-          String bp = BLOCKS + "/" + entry.getKey();
+    for (Map.Entry<String, BlockEntry> entry : blocks.entrySet()) {
+          String bp = BLOCKS + "/" + esc(entry.getKey());
           if (zk.checkExists().forPath(bp) == null) {
             blocksIdentical = false;
             break;
@@ -120,7 +120,7 @@ public class MetaStore {
       tx = tx.setData().forPath(fp, fbytes).and();
     }
     for (Map.Entry<String, BlockEntry> e : blocks.entrySet()) {
-      String bp = BLOCKS + "/" + e.getKey();
+      String bp = BLOCKS + "/" + esc(e.getKey());
       byte[] bbytes = JsonSerde.write(e.getValue());
       if (zk.checkExists().forPath(bp) == null) {
         tx = tx.create().forPath(bp, bbytes).and();
