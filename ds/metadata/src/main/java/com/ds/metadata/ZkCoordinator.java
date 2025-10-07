@@ -5,6 +5,7 @@ import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.framework.recipes.leader.LeaderLatch;
 import org.apache.curator.framework.recipes.leader.LeaderLatchListener;
 import org.apache.curator.retry.ExponentialBackoffRetry;
+import org.apache.zookeeper.Watcher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -13,6 +14,7 @@ public class ZkCoordinator implements AutoCloseable {
 
   private final CuratorFramework client;
   private final LeaderLatch leaderLatch;
+  private static final String STORAGE_NODES_PATH = "/ds/nodes/storage";
 
   public ZkCoordinator(String zk, String id) throws Exception {
     this.client =
@@ -33,6 +35,7 @@ public class ZkCoordinator implements AutoCloseable {
           }
         });
     this.leaderLatch.start();
+    watchStorageNodes();
   }
 
   public CuratorFramework client() {
@@ -51,5 +54,21 @@ public class ZkCoordinator implements AutoCloseable {
       // ignore
     }
     client.close();
+  }
+
+  private void watchStorageNodes() {
+    try {
+      client
+          .getChildren()
+          .usingWatcher(
+              (Watcher)
+                  event -> {
+                    log.info("Node change: {}", event);
+                    watchStorageNodes();
+                  })
+          .forPath(STORAGE_NODES_PATH);
+    } catch (Exception e) {
+      log.warn("Failed to set watcher on {}: {}", STORAGE_NODES_PATH, e.toString());
+    }
   }
 }

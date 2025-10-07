@@ -1,6 +1,7 @@
 package com.ds.storage.grpc;
 
 import com.ds.storage.BlockStore;
+import com.ds.storage.Replicator;
 import ds.Ack;
 import ds.BlockChunk;
 import ds.GetHdr;
@@ -17,9 +18,11 @@ import java.util.List;
 
 public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBase {
   private final BlockStore store;
+  private final Replicator replicator;
 
-  public StorageServiceImpl(BlockStore store) {
+  public StorageServiceImpl(BlockStore store, Replicator replicator) {
     this.store = store;
+    this.replicator = replicator;
   }
 
   @Override
@@ -105,8 +108,24 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
 
   @Override
   public void replicateBlock(GetHdr request, StreamObserver<Ack> responseObserver) {
-    responseObserver.onNext(
-        Ack.newBuilder().setOk(false).setMsg("Not implemented").build());
-    responseObserver.onCompleted();
+    try {
+      String[] parts = request.getBlockId().split("@");
+      if (parts.length != 2) {
+        throw new IllegalArgumentException("Expected blockId@host:port");
+      }
+      String blockId = parts[0];
+      String[] hp = parts[1].split(":");
+      if (hp.length != 2) {
+        throw new IllegalArgumentException("Expected host:port");
+      }
+      boolean ok =
+          replicator.replicate(blockId, hp[0], Integer.parseInt(hp[1]));
+      responseObserver.onNext(
+          Ack.newBuilder().setOk(ok).setMsg(ok ? "done" : "fail").build());
+      responseObserver.onCompleted();
+    } catch (Exception e) {
+      responseObserver.onError(
+          Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
+    }
   }
 }

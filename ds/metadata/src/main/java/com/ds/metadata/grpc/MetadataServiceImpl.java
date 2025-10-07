@@ -79,8 +79,16 @@ public class MetadataServiceImpl extends MetadataServiceGrpc.MetadataServiceImpl
       for (CommitBlock cb : req.getBlocksList()) {
         blockIds.add(cb.getBlockId());
         MetaStore.BlockEntry be = new MetaStore.BlockEntry();
-        be.size = cb.getSize();
-        be.replicas.addAll(cb.getReplicasList());
+        long size = cb.getSize();
+        be.size = size > 0 ? size : 8L * 1024 * 1024;
+        if (!cb.getReplicasList().isEmpty()) {
+          be.replicas.addAll(cb.getReplicasList());
+        } else {
+          var nodes = placement.chooseReplicas(cb.getBlockId());
+          for (var ni : nodes) {
+            be.replicas.add(ni.host + ":" + ni.port);
+          }
+        }
         bes.put(cb.getBlockId(), be);
       }
       fe.blocks = blockIds;
