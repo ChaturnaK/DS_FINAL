@@ -1,8 +1,10 @@
 package com.ds.storage;
 
+import com.ds.common.JsonSerde;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -38,6 +40,41 @@ public class BlockStore {
     return metaDir.resolve(blockId + ".json");
   }
 
+  public static final class Meta {
+    public String vectorClock = "";
+    public String checksum = "";
+    public String primary = "";
+  }
+
+  public Meta readMetaObj(String blockId) throws IOException {
+    Path mp = metaPath(blockId);
+    if (!Files.exists(mp)) {
+      return new Meta();
+    }
+    try {
+      return JsonSerde.read(Files.readAllBytes(mp), Meta.class);
+    } catch (RuntimeException e) {
+      return new Meta();
+    }
+  }
+
+  public void writeMetaObj(String blockId, Meta meta) throws IOException {
+    Meta m = meta == null ? new Meta() : meta;
+    Files.writeString(
+        metaPath(blockId),
+        new String(JsonSerde.write(m), StandardCharsets.UTF_8),
+        StandardOpenOption.CREATE,
+        StandardOpenOption.TRUNCATE_EXISTING);
+  }
+
+  public Path blockPathSibling(String blockId, String suffix) {
+    return blocksDir.resolve(blockId + "." + suffix);
+  }
+
+  public Path metaPathSibling(String blockId, String suffix) {
+    return metaDir.resolve(blockId + "." + suffix + ".json");
+  }
+
   public PutResult writeStreaming(String blockId, Iterable<byte[]> chunks) throws Exception {
     Path path = blockPath(blockId);
     Files.createDirectories(path.getParent());
@@ -66,19 +103,15 @@ public class BlockStore {
   }
 
   public void writeMeta(String blockId, String vectorClock, String checksumHex) throws IOException {
-    String vc = vectorClock == null ? "" : vectorClock;
-    String json =
-        "{\"vectorClock\": \"" + vc + "\", \"checksum\": \"" + checksumHex + "\"}";
-    Files.writeString(
-        metaPath(blockId), json, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    Meta m = new Meta();
+    m.vectorClock = vectorClock == null ? "" : vectorClock;
+    m.checksum = checksumHex == null ? "" : checksumHex;
+    m.primary = "";
+    writeMetaObj(blockId, m);
   }
 
   public byte[] readMeta(String blockId) throws IOException {
-    Path path = metaPath(blockId);
-    if (!Files.exists(path)) {
-      return "{\"vectorClock\":\"\",\"checksum\":\"\"}".getBytes();
-    }
-    return Files.readAllBytes(path);
+    return JsonSerde.write(readMetaObj(blockId));
   }
 
   public long size(String blockId) throws IOException {
