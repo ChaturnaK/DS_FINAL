@@ -1,5 +1,6 @@
 package com.ds.storage.grpc;
 
+import com.ds.common.VectorClock;
 import com.ds.storage.BlockStore;
 import com.ds.storage.Replicator;
 import ds.Ack;
@@ -13,6 +14,7 @@ import ds.PutRequest;
 import ds.StorageServiceGrpc;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -60,16 +62,90 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
           return;
         }
         try {
-          BlockStore.PutResult result = store.writeStreaming(blockId, chunks);
-          store.writeMeta(blockId, vectorClock, result.checksumHex);
-          PutAck ack =
-              PutAck.newBuilder()
-                  .setOk(true)
-                  .setChecksum(result.checksumHex)
-                  .setMsg("bytes=" + result.bytesWritten)
-                  .build();
-          responseObserver.onNext(ack);
-          responseObserver.onCompleted();
+          VectorClock incoming = VectorClock.fromJson(vectorClock);
+          BlockStore.Meta meta = store.readMetaObj(blockId);
+          if (meta.vectorClock == null) {
+            meta.vectorClock = "";
+          }
+          if (meta.checksum == null) {
+            meta.checksum = "";
+          }
+          if (meta.primary == null) {
+            meta.primary = "";
+          }
+          VectorClock current = VectorClock.fromJson(meta.vectorClock);
+          VectorClock.Order order = current.compare(incoming);
+          if (meta.checksum.isBlank()) {
+            BlockStore.PutResult res = store.writeStreaming(blockId, chunks);
+            meta.vectorClock = incoming.toJson();
+            meta.checksum = res.checksumHex;
+            meta.primary = "";
+            store.writeMetaObj(blockId, meta);
+            responseObserver.onNext(
+                PutAck.newBuilder()
+                    .setOk(true)
+                    .setChecksum(res.checksumHex)
+                    .setMsg("NEW")
+                    .build());
+            responseObserver.onCompleted();
+            return;
+          }
+
+          switch (order) {
+            case GREATER -> {
+              responseObserver.onNext(
+                  PutAck.newBuilder()
+                      .setOk(false)
+                      .setChecksum(meta.checksum)
+                      .setMsg("STALE")
+                      .build());
+              responseObserver.onCompleted();
+            }
+            case EQUAL -> {
+              responseObserver.onNext(
+                  PutAck.newBuilder()
+                      .setOk(true)
+                      .setChecksum(meta.checksum)
+                      .setMsg("IDEMPOTENT")
+                      .build());
+              responseObserver.onCompleted();
+            }
+            case LESS -> {
+              BlockStore.PutResult res = store.writeStreaming(blockId, chunks);
+              meta.vectorClock = incoming.toJson();
+              meta.checksum = res.checksumHex;
+              meta.primary = "";
+              store.writeMetaObj(blockId, meta);
+              responseObserver.onNext(
+                  PutAck.newBuilder()
+                      .setOk(true)
+                      .setChecksum(res.checksumHex)
+                      .setMsg("UPDATED")
+                      .build());
+              responseObserver.onCompleted();
+            }
+            case CONCURRENT -> {
+              String suffix =
+                  Files.exists(store.blockPathSibling(blockId, "a")) ? "b" : "a";
+              BlockStore.PutResult res = store.writeStreaming(blockId + "." + suffix, chunks);
+              BlockStore.Meta sibling = new BlockStore.Meta();
+              sibling.vectorClock = incoming.toJson();
+              sibling.checksum = res.checksumHex;
+              sibling.primary = suffix;
+              store.writeMetaObj(blockId + "." + suffix, sibling);
+              if (meta.primary == null) {
+                meta.primary = "";
+              }
+              store.writeMetaObj(blockId, meta);
+              responseObserver.onNext(
+                  PutAck.newBuilder()
+                      .setOk(false)
+                      .setChecksum(meta.checksum)
+                      .setMsg("CONFLICT:" + suffix)
+                      .build());
+              responseObserver.onCompleted();
+            }
+          }
         } catch (Exception e) {
           responseObserver.onError(
               Status.INTERNAL.withDescription(e.getMessage()).asRuntimeException());
@@ -82,14 +158,24 @@ public class StorageServiceImpl extends StorageServiceGrpc.StorageServiceImplBas
   public void getBlock(GetHdr request, StreamObserver<GetResponse> responseObserver) {
     String blockId = request.getBlockId();
     try {
-      byte[] metaBytes = store.readMeta(blockId);
-      String metaStr = new String(metaBytes);
-      String vc = metaStr.replaceAll(".*\"vectorClock\"\\s*:\\s*\"([^\"]*)\".*", "$1");
-      String checksum = metaStr.replaceAll(".*\"checksum\"\\s*:\\s*\"([^\"]*)\".*", "$1");
+      BlockStore.Meta baseMeta = store.readMetaObj(blockId);
+      String chosen = blockId;
+      if (baseMeta.primary != null && !baseMeta.primary.isBlank()) {
+        chosen = blockId + "." + baseMeta.primary;
+      } else if (!Files.exists(store.blockPath(blockId))) {
+        if (Files.exists(store.blockPathSibling(blockId, "a"))) {
+          chosen = blockId + ".a";
+        } else if (Files.exists(store.blockPathSibling(blockId, "b"))) {
+          chosen = blockId + ".b";
+        }
+      }
+      BlockStore.Meta chosenMeta = store.readMetaObj(chosen);
+      String vc = chosenMeta.vectorClock == null ? "" : chosenMeta.vectorClock;
+      String checksum = chosenMeta.checksum == null ? "" : chosenMeta.checksum;
       GetMeta meta = GetMeta.newBuilder().setVectorClock(vc).setChecksum(checksum).build();
       responseObserver.onNext(GetResponse.newBuilder().setMeta(meta).build());
 
-      for (byte[] buf : store.streamRead(blockId, 1024 * 1024)) {
+      for (byte[] buf : store.streamRead(chosen, 1024 * 1024)) {
         if (buf.length == 0) {
           continue;
         }

@@ -50,7 +50,11 @@ public class Replicator {
         throw new IOException(
             "Checksum mismatch src=" + checksum + " dst=" + res.checksumHex);
       }
-      store.writeMeta(blockId, vc, checksum);
+      BlockStore.Meta meta = new BlockStore.Meta();
+      meta.vectorClock = vc;
+      meta.checksum = checksum;
+      meta.primary = "";
+      store.writeMetaObj(blockId, meta);
       log.info("Replication complete {} bytes={} checksum={}", blockId, res.bytesWritten, checksum);
       return true;
     } catch (Exception e) {

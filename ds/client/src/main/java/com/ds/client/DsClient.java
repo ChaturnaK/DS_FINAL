@@ -3,6 +3,7 @@ package com.ds.client;
 import static com.ds.client.NetUtil.host;
 import static com.ds.client.NetUtil.port;
 
+import com.ds.common.VectorClock;
 import ds.BlockPlan;
 import ds.CommitBlock;
 import ds.CommitReq;
@@ -34,6 +35,10 @@ public class DsClient {
   private static final int QUORUM_R = Math.max(1, Integer.getInteger("ds.quorum.r", 2));
   private static final long WRITE_TIMEOUT_MS = Math.max(1L, Long.getLong("ds.quorum.timeout.ms", 20_000L));
   private static final long READ_TIMEOUT_MS = Math.max(1L, Long.getLong("ds.quorum.timeout.read.ms", 15_000L));
+  private static final String CLIENT_ID =
+      System.getProperty("ds.client.id", defaultClientId());
+  private static final ConcurrentHashMap<String, VectorClock> BLOCK_CLOCKS =
+      new ConcurrentHashMap<>();
 
   public static void main(String[] args) throws Exception {
     if (args.length < 1) {
@@ -94,11 +99,18 @@ public class DsClient {
             var replicas = bp.getReplicaUrlsList();
             List<String> ids = new ArrayList<>(replicas);
             List<java.util.function.Supplier<Boolean>> tasks = new ArrayList<>();
+            String blockClock = nextVectorClock(bp.getBlockId());
             for (String hp : replicas) {
               tasks.add(
                   () -> {
                     try {
-                      StreamTool.put(host(hp), port(hp), bp.getBlockId(), tmpChunk);
+                      StreamTool.put(
+                          host(hp),
+                          port(hp),
+                          bp.getBlockId(),
+                          tmpChunk,
+                          blockClock,
+                          CLIENT_ID);
                       return Boolean.TRUE;
                     } catch (Exception e) {
                       throw new RuntimeException(e);
@@ -259,6 +271,80 @@ public class DsClient {
         mc.shutdownNow();
         System.out.println("Download complete → " + localOut);
       }
+      case "race" -> {
+        if (args.length < 4) {
+          System.out.println("Usage: race <localA> <localB> <remotePath>");
+          return;
+        }
+        Path a = Paths.get(args[1]);
+        Path b = Paths.get(args[2]);
+        String remote = args[3];
+        ManagedChannel mc =
+            ManagedChannelBuilder.forAddress("localhost", 7000).usePlaintext().build();
+        MetadataServiceGrpc.MetadataServiceBlockingStub meta =
+            MetadataServiceGrpc.newBlockingStub(mc);
+        PlanPutResp plan =
+            meta.planPut(
+                PlanPutReq.newBuilder()
+                    .setPath(remote)
+                    .setSize(Files.size(a))
+                    .setChunkSize(CHUNK_SIZE)
+                    .build());
+        if (plan.getBlocksCount() == 0) {
+          System.out.println("No blocks planned for " + remote);
+          mc.shutdownNow();
+          return;
+        }
+        BlockPlan bp0 = plan.getBlocks(0);
+        if (bp0.getReplicaUrlsCount() < 2) {
+          System.out.println("Need at least two replicas to race");
+          mc.shutdownNow();
+          return;
+        }
+        String hp0 = bp0.getReplicaUrls(0);
+        String hp1 = bp0.getReplicaUrls(1);
+        String clientA = CLIENT_ID + "-A";
+        String clientB = CLIENT_ID + "-B";
+        VectorClock vcA = new VectorClock();
+        vcA.increment(clientA);
+        VectorClock vcB = new VectorClock();
+        vcB.increment(clientB);
+        Thread t1 =
+            new Thread(
+                () -> {
+                  try {
+                    StreamTool.put(
+                        host(hp0),
+                        port(hp0),
+                        bp0.getBlockId(),
+                        a,
+                        vcA.toJson(),
+                        clientA);
+                  } catch (Exception e) {
+                    e.printStackTrace();
+                  }
+                });
+        Thread t2 =
+            new Thread(
+                () -> {
+                  try {
+                    StreamTool.put(
+                        host(hp1),
+                        port(hp1),
+                        bp0.getBlockId(),
+                        b,
+                        vcB.toJson(),
+                        clientB);
+                  } catch (Exception e) {
+                    e.printStackTrace();
+                  }
+                });
+        t1.start();
+        t2.start();
+        t1.join();
+        t2.join();
+        mc.shutdownNow();
+      }
       default -> System.out.println("Unknown command");
     }
   }
@@ -267,7 +353,28 @@ public class DsClient {
     System.out.println("Usage:");
     System.out.println("  put <localFile> <remotePath>");
     System.out.println("  get <remotePath> <localFile>");
+    System.out.println("  race <localA> <localB> <remotePath>");
     System.out.println("  putBlock <host:port> <blockId> <file>");
     System.out.println("  getBlock <host:port> <blockId> <out>");
+  }
+
+  private static String nextVectorClock(String blockId) {
+    VectorClock vc =
+        BLOCK_CLOCKS.compute(
+            blockId,
+            (k, existing) -> {
+              VectorClock clock = existing == null ? new VectorClock() : existing;
+              clock.increment(CLIENT_ID);
+              return clock;
+            });
+    return vc.toJson();
+  }
+
+  private static String defaultClientId() {
+    try {
+      return java.net.InetAddress.getLocalHost().getHostName();
+    } catch (Exception e) {
+      return "cli-" + java.util.UUID.randomUUID();
+    }
   }
 }
