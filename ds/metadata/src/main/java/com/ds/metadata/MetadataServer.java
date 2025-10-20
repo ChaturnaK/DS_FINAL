@@ -9,6 +9,8 @@ import io.grpc.protobuf.services.ProtoReflectionService;
 import io.micrometer.core.instrument.Counter;
 import java.net.InetAddress;
 import java.net.UnknownHostException;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -75,8 +77,7 @@ public class MetadataServer {
       MetaStore metaStore = new MetaStore(coordinator.client());
       PlacementService placementService = new PlacementService(coordinator.client(), replication);
       MetadataServiceImpl service = new MetadataServiceImpl(metaStore, placementService, coordinator);
-      HealingPlanner planner =
-          new HealingPlanner(coordinator.client(), placementService, metaStore, replication);
+      HealingPlanner planner = new HealingPlanner(coordinator.client(), placementService, metaStore, replication);
       final ZkCoordinator coordRef = coordinator;
       final HealingPlanner plannerRef = planner;
       healExec = Executors.newSingleThreadScheduledExecutor();
@@ -96,6 +97,13 @@ public class MetadataServer {
       metricsExec.scheduleAtFixedRate(
           new NtpSync("pool.ntp.org", 123), 1, 600, TimeUnit.SECONDS);
       metricsExec.scheduleAtFixedRate(Metrics::dumpCsv, 5, 5, TimeUnit.SECONDS);
+      final PlacementService placementRef = placementService;
+      final ZkCoordinator coordHudRef = coordinator;
+      metricsExec.scheduleAtFixedRate(
+          () -> logClusterHud(coordHudRef, placementRef, plannerRef),
+          5,
+          5,
+          TimeUnit.SECONDS);
 
       Counter leaderChanges = Metrics.counter("leader_changes");
       String leaderEndpoint = host + ":" + port;
@@ -114,12 +122,11 @@ public class MetadataServer {
         listenerCoord.publishLeaderEndpoint(leaderEndpoint);
       }
 
-      server =
-          NettyServerBuilder.forPort(port)
-              .addService(service)
-              .addService(ProtoReflectionService.newInstance())
-              .build()
-              .start();
+      server = NettyServerBuilder.forPort(port)
+          .addService(service)
+          .addService(ProtoReflectionService.newInstance())
+          .build()
+          .start();
 
       System.out.println("[MetadataServer] gRPC started on :" + port + " (Stage 2)");
 
@@ -193,6 +200,84 @@ public class MetadataServer {
       return InetAddress.getLocalHost().getHostName();
     } catch (UnknownHostException e) {
       return "unknown-host";
+    }
+  }
+
+  private static void logClusterHud(
+      ZkCoordinator coord, PlacementService placement, HealingPlanner planner) {
+    try {
+      boolean isLeader = coord.isLeader();
+      String publishedLeader = "";
+      try {
+        byte[] data =
+            coord
+                .client()
+                .getData()
+                .forPath("/ds/metadata/leader");
+        if (data != null && data.length > 0) {
+          publishedLeader = new String(data, StandardCharsets.UTF_8);
+        }
+      } catch (Exception ignored) {
+        // ignore errors fetching the leader endpoint; leave blank
+      }
+      List<PlacementService.NodeInfo> liveNodes = placement.listLiveNodes();
+      String nodeSummary =
+          liveNodes.isEmpty()
+              ? "none"
+              : liveNodes.stream()
+                  .map(
+                      n ->
+                          n.host
+                              + ":"
+                              + n.port
+                              + (n.zone == null || n.zone.isBlank() ? "" : " (" + n.zone + ")"))
+                  .sorted()
+                  .reduce((a, b) -> a + ", " + b)
+                  .orElse("none");
+      double backlog = readGauge("replication_backlog");
+      double tasks = readGauge("healing_tasks");
+      double success = readCounter("healing_success");
+      double fail = readCounter("healing_fail");
+      System.out.printf(
+          "[HUD] leader=%s published=%s live=%d [%s] backlog=%.0f tasks=%.0f success=%.0f fail=%.0f%n",
+          isLeader ? "self" : "other",
+          publishedLeader.isBlank() ? "n/a" : publishedLeader,
+          liveNodes.size(),
+          nodeSummary,
+          backlog,
+          tasks,
+          success,
+          fail);
+      if (planner != null) {
+        List<String> recent = planner.drainRecentTasks();
+        if (!recent.isEmpty()) {
+          System.out.println("[HUD] healing-tasks: " + String.join(" | ", recent));
+        }
+      }
+    } catch (Exception e) {
+      System.out.println("[HUD] error: " + e.getMessage());
+    }
+  }
+
+  private static double readGauge(String name) {
+    try {
+      var g = Metrics.reg().find(name).gauge();
+      if (g == null) {
+        return 0.0;
+      }
+      double v = g.value();
+      return Double.isNaN(v) ? 0.0 : v;
+    } catch (Exception e) {
+      return 0.0;
+    }
+  }
+
+  private static double readCounter(String name) {
+    try {
+      var c = Metrics.reg().find(name).counter();
+      return c == null ? 0.0 : c.count();
+    } catch (Exception e) {
+      return 0.0;
     }
   }
 }
