@@ -2,6 +2,7 @@ package com.ds.metadata;
 
 import com.ds.common.Metrics;
 import com.ds.metadata.grpc.MetadataServiceImpl;
+import com.ds.time.ClusterClock;
 import com.ds.time.NtpSync;
 import io.grpc.Server;
 import io.grpc.netty.shaded.io.grpc.netty.NettyServerBuilder;
@@ -94,8 +95,16 @@ public class MetadataServer {
           TimeUnit.SECONDS);
 
       metricsExec = Executors.newScheduledThreadPool(1);
-      metricsExec.scheduleAtFixedRate(
-          new NtpSync("pool.ntp.org", 123), 1, 600, TimeUnit.SECONDS);
+      // Demo-friendly NTP: multi-host, relaxed thresholds (30s degraded, 20min unreliable)
+      NtpSync ntpSync =
+          new NtpSync(
+              "pool.ntp.org,time.google.com,time.cloudflare.com",
+              123,
+              3,
+              30_000L,
+              1_200_000L);
+      ClusterClock.registerHealthSupplier(ntpSync::health);
+      metricsExec.scheduleAtFixedRate(ntpSync, 1, 120, TimeUnit.SECONDS);
       metricsExec.scheduleAtFixedRate(Metrics::dumpCsv, 5, 5, TimeUnit.SECONDS);
       final PlacementService placementRef = placementService;
       final ZkCoordinator coordHudRef = coordinator;
@@ -111,6 +120,8 @@ public class MetadataServer {
       coordinator.addLeadershipListener(
           isLeader -> {
             leaderChanges.increment();
+            String state = isLeader ? "GRANTED" : "REVOKED";
+            System.out.printf("[LEADER] %s -> %s%n", state, leaderEndpoint);
             if (isLeader) {
               listenerCoord.publishLeaderEndpoint(leaderEndpoint);
             } else {
@@ -238,8 +249,9 @@ public class MetadataServer {
       double tasks = readGauge("healing_tasks");
       double success = readCounter("healing_success");
       double fail = readCounter("healing_fail");
+      var clockHealth = ClusterClock.currentHealth();
       System.out.printf(
-          "[HUD] leader=%s published=%s live=%d [%s] backlog=%.0f tasks=%.0f success=%.0f fail=%.0f%n",
+          "[HUD] leader=%s published=%s live=%d [%s] backlog=%.0f tasks=%.0f success=%.0f fail=%.0f clock=%s%n",
           isLeader ? "self" : "other",
           publishedLeader.isBlank() ? "n/a" : publishedLeader,
           liveNodes.size(),
@@ -247,7 +259,8 @@ public class MetadataServer {
           backlog,
           tasks,
           success,
-          fail);
+          fail,
+          clockHealth);
       if (planner != null) {
         List<String> recent = planner.drainRecentTasks();
         if (!recent.isEmpty()) {

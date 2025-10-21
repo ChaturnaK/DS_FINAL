@@ -58,6 +58,7 @@ public final class NtpSync implements Runnable {
     this.degradedMs = Math.max(1L, degradedMs);
     this.unreliableMs = Math.max(this.degradedMs, unreliableMs);
     this.offsetGauge = Metrics.gauge("ntp.offset.ms", 0.0);
+    this.lastSuccessMs = System.currentTimeMillis();
     Metrics.gauge(STATUS_GAUGE, 1.0);
     Metrics.gauge(FAILURE_GAUGE, 0.0);
     Metrics.gauge(STALENESS_GAUGE, 0.0);

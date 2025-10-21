@@ -1,15 +1,12 @@
 package com.ds.metadata;
 
 import com.ds.common.Metrics;
+import com.ds.time.ClusterClock;
 import ds.Ack;
 import ds.GetHdr;
 import ds.StorageServiceGrpc;
 import io.grpc.ManagedChannel;
 import io.grpc.ManagedChannelBuilder;
-import org.apache.curator.framework.CuratorFramework;
-import org.apache.zookeeper.KeeperException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -21,6 +18,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+import org.apache.curator.framework.CuratorFramework;
+import org.apache.zookeeper.KeeperException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class HealingPlanner implements Runnable {
   private static final Logger log = LoggerFactory.getLogger(HealingPlanner.class);
@@ -45,7 +46,7 @@ public class HealingPlanner implements Runnable {
   public void run() {
     double backlog = 0.0;
     List<Future<?>> futures = new ArrayList<>();
-    long startTime = System.currentTimeMillis();
+    long startTime = ClusterClock.now();
     int totalTasks = 0;
     try {
       if (zk.checkExists().forPath(zkRootBlocks) == null) {
@@ -114,7 +115,7 @@ public class HealingPlanner implements Runnable {
             log.info("Scheduling replication block={} src={} tgt={}", blockId, src, targetUrl);
             totalTasks++;
             futures.add(healingPool.submit(() -> {
-              long taskStart = System.currentTimeMillis();
+              long taskStart = ClusterClock.now();
               String blockAndSrc = blockId + "@" + src;
               String[] hp = targetUrl.split(":");
               ManagedChannel ch = ManagedChannelBuilder.forAddress(hp[0], Integer.parseInt(hp[1]))
@@ -145,7 +146,7 @@ public class HealingPlanner implements Runnable {
                 Metrics.counter("healing_fail").increment();
               } finally {
                 ch.shutdownNow();
-                long taskEnd = System.currentTimeMillis();
+                long taskEnd = ClusterClock.now();
                 Metrics.timer("healing_task_time").record(taskEnd - taskStart, TimeUnit.MILLISECONDS);
                 recordTask(blockId, srcFinal, targetFinal, ok, resultMsg);
               }
@@ -168,7 +169,7 @@ public class HealingPlanner implements Runnable {
       log.error("HealingPlanner run() error {}", e.toString());
     } finally {
       Metrics.gauge("replication_backlog", backlog);
-      long elapsed = System.currentTimeMillis() - startTime;
+      long elapsed = ClusterClock.now() - startTime;
       Metrics.timer("healing_total_time").record(elapsed, TimeUnit.MILLISECONDS);
       Metrics.gauge("healing_tasks", totalTasks);
     }
